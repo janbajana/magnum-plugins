@@ -29,7 +29,9 @@
 #include <unordered_map>
 
 #include <gst/gst.h>
+#include <gst/gl/gl.h>
 #include <gst/player/gstplayer.h>
+#include <gst/gl/x11/gstgldisplay_x11.h>
 
 #include <Corrade/Containers/ArrayView.h>
 #include <Corrade/Containers/Optional.h>
@@ -85,10 +87,48 @@ print_version()
     g_free(version_str);
 }
 
+GstPlayer*
+create_player()
+{
+    // GstPlayerVideoRenderer* renderer = g_object_new(gst_player_my_video_renderer_get_type(), NULL);
+    // G_TYPE_CHECK_INSTANCE_TYPE(renderer, gst_player_my_video_renderer_get_type());
+    // GstPlayer* player = gst_player_new(renderer, NULL); // gst_player_g_main_context_signal_dispatcher_new(NULL));
+
+    // g_signal_connect(player, "state-changed", G_CALLBACK(player_state_changed), NULL);
+    // g_signal_connect(player, "error", G_CALLBACK(player_error), NULL);
+
+    // GstPipeline* pipeline = GST_PIPELINE(gst_player_get_pipeline(player));
+
+    // GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
+    // gst_bus_add_signal_watch(bus);
+    // // g_signal_connect (bus, "message::error", G_CALLBACK (end_stream_cb), loop);
+    // // g_signal_connect (bus, "message::warning", G_CALLBACK (end_stream_cb), loop);
+    // // g_signal_connect (bus, "message::eos", G_CALLBACK (end_stream_cb), loop);
+    // gst_bus_enable_sync_message_emission(bus);
+    // g_signal_connect(bus, "sync-message", G_CALLBACK(sync_bus_call), NULL);
+    // gst_object_unref(bus);
+
+    // // g_thread_new(NULL, mainrunner, NULL);
+
+    return nullptr;
+}
+
+void
+setURI(GstPlayer* player, const char* uri)
+{
+    gst_player_set_uri(player, uri);
+}
+
 } // namespace
 
 namespace Magnum {
 namespace Trade {
+
+struct GstVideoImporter::Play
+{
+    GstPlayer* player{ nullptr };
+    bool isOpened = false;
+};
 
 GstVideoImporter::GstVideoImporter() { init(); }
 
@@ -110,20 +150,25 @@ GstVideoImporter::doFeatures() const
 bool
 GstVideoImporter::doIsOpened() const
 {
-    return _isOpened;
+    return _f && _f->isOpened;
 }
 
 void
 GstVideoImporter::doOpenFile(const std::string& filename)
 {
-    _isOpened = true;
+    if (!_f)
+    {
+        _f.reset(new Play);
+    }
+
+    _f->isOpened = true;
     Debug{} << "GstVideoImporter doOpenFile: " << filename;
 }
 
 void
 GstVideoImporter::doClose()
 {
-    _isOpened = false;
+    _f->isOpened = false;
     Debug{} << "GstVideoImporter doOpenFile: ";
 }
 
