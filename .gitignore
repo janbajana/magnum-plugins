@@ -6,3 +6,6 @@ pkg
 *~
 *.pkg.tar.zst
 CMakeLists.txt.user*
+
+# VS Code specific
+.vscode
