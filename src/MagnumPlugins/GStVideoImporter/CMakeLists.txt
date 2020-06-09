@@ -36,30 +36,32 @@ endif()
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/configure.h.cmake
                ${CMAKE_CURRENT_BINARY_DIR}/configure.h)
 
-# GstVideoImporter plugin
+# GStVideoImporter plugin
 add_plugin(
-    GstVideoImporter
+    GStVideoImporter
     "${MAGNUM_PLUGINS_IMPORTER_DEBUG_BINARY_INSTALL_DIR};${MAGNUM_PLUGINS_IMPORTER_DEBUG_LIBRARY_INSTALL_DIR}"
     "${MAGNUM_PLUGINS_IMPORTER_RELEASE_BINARY_INSTALL_DIR};${MAGNUM_PLUGINS_IMPORTER_RELEASE_LIBRARY_INSTALL_DIR}"
-    GstVideoImporter.conf
-    GstVideoImporter.cpp
-    GstVideoImporter.h)
+    GStVideoImporter.conf
+    GStVideoRenderer.cpp
+    GStVideoRenderer.h
+    GStVideoImporter.cpp
+    GStVideoImporter.h)
 
 if(BUILD_PLUGINS_STATIC AND BUILD_STATIC_PIC)
-    set_target_properties(GstVideoImporter PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(GStVideoImporter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
-target_include_directories(GstVideoImporter PUBLIC ${PROJECT_SOURCE_DIR}/src
+target_include_directories(GStVideoImporter PUBLIC ${PROJECT_SOURCE_DIR}/src
                                                    ${PROJECT_BINARY_DIR}/src)
 
 target_link_libraries(
-    GstVideoImporter PUBLIC Magnum::Trade PkgConfig::gstreamer-1.0 PkgConfig::gstreamer-gl-1.0
+    GStVideoImporter PUBLIC Magnum::Trade PkgConfig::gstreamer-1.0 PkgConfig::gstreamer-gl-1.0
                             PkgConfig::gstreamer-app-1.0 PkgConfig::gstreamer-player-1.0)
 
 if(CORRADE_TARGET_WINDOWS)
-    target_link_libraries(GstVideoImporter PUBLIC Magnum::AnyImageImporter)
+    target_link_libraries(GStVideoImporter PUBLIC Magnum::AnyImageImporter)
 elseif(BUILD_PLUGINS_STATIC)
-    target_link_libraries(GstVideoImporter INTERFACE Magnum::AnyImageImporter)
+    target_link_libraries(GStVideoImporter INTERFACE Magnum::AnyImageImporter)
 endif()
 
 # Modify output location only if all are set, otherwise it makes no sense
@@ -67,7 +69,7 @@ if(CMAKE_RUNTIME_OUTPUT_DIRECTORY
    AND CMAKE_LIBRARY_OUTPUT_DIRECTORY
    AND CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
     set_target_properties(
-        GstVideoImporter
+        GStVideoImporter
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/magnum$<$<CONFIG:Debug>:-d>/importers
                    LIBRARY_OUTPUT_DIRECTORY
@@ -76,17 +78,17 @@ if(CMAKE_RUNTIME_OUTPUT_DIRECTORY
                    ${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/magnum$<$<CONFIG:Debug>:-d>/importers)
 endif()
 
-install(FILES GstVideoImporter.h ${CMAKE_CURRENT_BINARY_DIR}/configure.h
-        DESTINATION ${MAGNUM_PLUGINS_INCLUDE_INSTALL_DIR}/GstVideoImporter)
+install(FILES GStVideoImporter.h ${CMAKE_CURRENT_BINARY_DIR}/configure.h
+        DESTINATION ${MAGNUM_PLUGINS_INCLUDE_INSTALL_DIR}/GStVideoImporter)
 
 # Automatic static plugin import
 if(BUILD_PLUGINS_STATIC)
     install(FILES importStaticPlugin.cpp
-            DESTINATION ${MAGNUM_PLUGINS_INCLUDE_INSTALL_DIR}/GstVideoImporter)
-    target_sources(GstVideoImporter INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/importStaticPlugin.cpp)
+            DESTINATION ${MAGNUM_PLUGINS_INCLUDE_INSTALL_DIR}/GStVideoImporter)
+    target_sources(GStVideoImporter INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/importStaticPlugin.cpp)
 endif()
 
 # if(BUILD_TESTS) add_subdirectory(Test) endif()
 
-# MagnumPlugins GstVideoImporter target alias for superprojects
-add_library(MagnumPlugins::GstVideoImporter ALIAS GstVideoImporter)
+# MagnumPlugins GStVideoImporter target alias for superprojects
+add_library(MagnumPlugins::GStVideoImporter ALIAS GStVideoImporter)

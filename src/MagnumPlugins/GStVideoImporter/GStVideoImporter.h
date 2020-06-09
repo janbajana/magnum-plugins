@@ -1,5 +1,5 @@
-#ifndef Magnum_Trade_GstVideoImporter_h
-#define Magnum_Trade_GstVideoImporter_h
+#ifndef Magnum_Trade_GStVideoImporter_h
+#define Magnum_Trade_GStVideoImporter_h
 /*
     This file is part of Magnum.
 
@@ -27,16 +27,16 @@
 */
 
 /** @file
- * @brief Class @ref Magnum::Video::GstVideoImporter
+ * @brief Class @ref Magnum::Video::GStVideoImporter
  */
 
 #include <Magnum/Trade/AbstractImporter.h>
 
-#include "MagnumPlugins/GstVideoImporter/configure.h"
+#include "MagnumPlugins/GStVideoImporter/configure.h"
 
 #ifndef DOXYGEN_GENERATING_OUTPUT
 #ifndef MAGNUM_GSTVIDEOIMPORTER_BUILD_STATIC
-#ifdef GstVideoImporter_EXPORTS
+#ifdef GStVideoImporter_EXPORTS
 #define MAGNUM_GSTVIDEOIMPORTER_EXPORT CORRADE_VISIBILITY_EXPORT
 #else
 #define MAGNUM_GSTVIDEOIMPORTER_EXPORT CORRADE_VISIBILITY_IMPORT
@@ -56,32 +56,32 @@ namespace Trade {
 /**
 @brief GStreamer video importer
 */
-class MAGNUM_GSTVIDEOIMPORTER_EXPORT GstVideoImporter : public AbstractImporter
+class MAGNUM_GSTVIDEOIMPORTER_EXPORT GStVideoImporter : public AbstractImporter
 {
 public:
     /**
          * @brief Default constructor
          *
          * In case you want to open images, use
-         * @ref GstVideoImporter(PluginManager::Manager<AbstractImporter>&)
+         * @ref GStVideoImporter(PluginManager::Manager<AbstractImporter>&)
          * instead.
          */
-    explicit GstVideoImporter();
+    explicit GStVideoImporter();
 
     /**
          * @brief Constructor
          *
          * The plugin needs access to plugin manager for importing images.
          */
-    explicit GstVideoImporter(PluginManager::Manager<AbstractImporter>& manager);
+    explicit GStVideoImporter(PluginManager::Manager<AbstractImporter>& manager);
 
     /** @brief Plugin manager constructor */
-    explicit GstVideoImporter(PluginManager::AbstractManager& manager, const std::string& plugin);
+    explicit GStVideoImporter(PluginManager::AbstractManager& manager, const std::string& plugin);
 
-    ~GstVideoImporter();
+    ~GStVideoImporter();
 
 private:
-    struct File;
+    struct Play;
 
     MAGNUM_GSTVIDEOIMPORTER_LOCAL ImporterFeatures doFeatures() const override;
     MAGNUM_GSTVIDEOIMPORTER_LOCAL bool doIsOpened() const override;
@@ -95,7 +95,7 @@ private:
     MAGNUM_GSTVIDEOIMPORTER_LOCAL bool init();
     MAGNUM_GSTVIDEOIMPORTER_LOCAL void deInit();
 
-    bool _isOpened = false;
+    Containers::Pointer<Play> _p{ nullptr };
 };
 
 } // namespace Trade

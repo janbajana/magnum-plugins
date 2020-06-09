@@ -23,13 +23,13 @@
     DEALINGS IN THE SOFTWARE.
 */
 
-#include "MagnumPlugins/GstVideoImporter/configure.h"
+#include "MagnumPlugins/GStVideoImporter/configure.h"
 
 #ifdef MAGNUM_GSTVIDEOIMPORTER_BUILD_STATIC
 #include <Corrade/PluginManager/AbstractManager.h>
 
-static int magnumGstVideoImporterStaticImporter() {
-    CORRADE_PLUGIN_IMPORT(GstVideoImporter)
+static int magnumGStVideoImporterStaticImporter() {
+    CORRADE_PLUGIN_IMPORT(GStVideoImporter)
     return 1;
-} CORRADE_AUTOMATIC_INITIALIZER(magnumGstVideoImporterStaticImporter)
+} CORRADE_AUTOMATIC_INITIALIZER(magnumGStVideoImporterStaticImporter)
 #endif

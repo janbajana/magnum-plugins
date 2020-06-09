@@ -39,7 +39,7 @@ if(WITH_ASSIMPIMPORTER)
 endif()
 
 if(WITH_GSTVIDEOIMPORTER)
-    add_subdirectory(GstVideoImporter)
+    add_subdirectory(GStVideoImporter)
 endif()
 
 if(WITH_BASISIMAGECONVERTER)
