@@ -20,7 +20,7 @@
 # OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 
-find_package(Magnum REQUIRED Trade AnyImageImporter)
+find_package(Magnum REQUIRED Video)
 
 find_package(PkgConfig REQUIRED)
 
@@ -39,8 +39,8 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/configure.h.cmake
 # GStVideoImporter plugin
 add_plugin(
     GStVideoImporter
-    "${MAGNUM_PLUGINS_IMPORTER_DEBUG_BINARY_INSTALL_DIR};${MAGNUM_PLUGINS_IMPORTER_DEBUG_LIBRARY_INSTALL_DIR}"
-    "${MAGNUM_PLUGINS_IMPORTER_RELEASE_BINARY_INSTALL_DIR};${MAGNUM_PLUGINS_IMPORTER_RELEASE_LIBRARY_INSTALL_DIR}"
+    "${MAGNUM_PLUGINS_VIDEOIMPORTER_DEBUG_BINARY_INSTALL_DIR};${MAGNUM_PLUGINS_VIDEOIMPORTER_DEBUG_LIBRARY_INSTALL_DIR}"
+    "${MAGNUM_PLUGINS_VIDEOIMPORTER_RELEASE_BINARY_INSTALL_DIR};${MAGNUM_PLUGINS_VIDEOIMPORTER_RELEASE_LIBRARY_INSTALL_DIR}"
     GStVideoImporter.conf
     GStVideoRenderer.cpp
     GStVideoRenderer.h
@@ -55,14 +55,14 @@ target_include_directories(GStVideoImporter PUBLIC ${PROJECT_SOURCE_DIR}/src
                                                    ${PROJECT_BINARY_DIR}/src)
 
 target_link_libraries(
-    GStVideoImporter PUBLIC Magnum::Trade PkgConfig::gstreamer-1.0 PkgConfig::gstreamer-gl-1.0
+    GStVideoImporter PUBLIC Magnum::Video PkgConfig::gstreamer-1.0 PkgConfig::gstreamer-gl-1.0
                             PkgConfig::gstreamer-app-1.0 PkgConfig::gstreamer-player-1.0)
 
-if(CORRADE_TARGET_WINDOWS)
-    target_link_libraries(GStVideoImporter PUBLIC Magnum::AnyImageImporter)
-elseif(BUILD_PLUGINS_STATIC)
-    target_link_libraries(GStVideoImporter INTERFACE Magnum::AnyImageImporter)
-endif()
+# if(CORRADE_TARGET_WINDOWS)
+#     target_link_libraries(GStVideoImporter PUBLIC Magnum::AnyImageImporter)
+# elseif(BUILD_PLUGINS_STATIC)
+#     target_link_libraries(GStVideoImporter INTERFACE Magnum::AnyImageImporter)
+# endif()
 
 # Modify output location only if all are set, otherwise it makes no sense
 if(CMAKE_RUNTIME_OUTPUT_DIRECTORY

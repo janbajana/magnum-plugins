@@ -1,5 +1,5 @@
-#ifndef Magnum_Trade_GStVideoImporter_h
-#define Magnum_Trade_GStVideoImporter_h
+#ifndef Magnum_Video_GStVideoImporter_h
+#define Magnum_Video_GStVideoImporter_h
 /*
     This file is part of Magnum.
 
@@ -30,7 +30,9 @@
  * @brief Class @ref Magnum::Video::GStVideoImporter
  */
 
-#include <Magnum/Trade/AbstractImporter.h>
+#include <Corrade/Containers/Array.h>
+
+#include <Magnum/Video/AbstractImporter.h>
 
 #include "MagnumPlugins/GStVideoImporter/configure.h"
 
@@ -51,7 +53,7 @@
 #endif
 
 namespace Magnum {
-namespace Trade {
+namespace Video {
 
 /**
 @brief GStreamer video importer
@@ -92,13 +94,20 @@ private:
     MAGNUM_GSTVIDEOIMPORTER_LOCAL void doStop();
     MAGNUM_GSTVIDEOIMPORTER_LOCAL void doPause();
 
+    MAGNUM_GSTVIDEOIMPORTER_LOCAL Int doGetFormat() const override;
+    MAGNUM_GSTVIDEOIMPORTER_LOCAL Float doGetDuration() const override;
+    MAGNUM_GSTVIDEOIMPORTER_LOCAL Float doGetPosition() const override;
+
     MAGNUM_GSTVIDEOIMPORTER_LOCAL bool init();
     MAGNUM_GSTVIDEOIMPORTER_LOCAL void deInit();
+
+    MAGNUM_GSTVIDEOIMPORTER_LOCAL Containers::Array<char> doData() override;
+
 
     Containers::Pointer<Play> _p{ nullptr };
 };
 
-} // namespace Trade
+} // namespace Video
 } // namespace Magnum
 
 #endif

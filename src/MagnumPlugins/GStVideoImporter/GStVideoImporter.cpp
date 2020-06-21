@@ -37,26 +37,18 @@
 
 #include <Corrade/Containers/ArrayView.h>
 #include <Corrade/Containers/Optional.h>
+
 #include <Corrade/Utility/Algorithms.h>
 #include <Corrade/Utility/ConfigurationGroup.h>
 #include <Corrade/Utility/DebugStl.h>
 #include <Corrade/Utility/Directory.h>
 #include <Corrade/Utility/String.h>
+
 #include <Magnum/FileCallback.h>
 #include <Magnum/Mesh.h>
 #include <Magnum/Math/Vector.h>
 #include <Magnum/PixelFormat.h>
 #include <Magnum/PixelStorage.h>
-#include <Magnum/Trade/ArrayAllocator.h>
-#include <Magnum/Trade/CameraData.h>
-#include <Magnum/Trade/ImageData.h>
-#include <Magnum/Trade/LightData.h>
-#include <Magnum/Trade/MeshData.h>
-#include <Magnum/Trade/MeshObjectData3D.h>
-#include <Magnum/Trade/PhongMaterialData.h>
-#include <Magnum/Trade/SceneData.h>
-#include <Magnum/Trade/TextureData.h>
-#include <MagnumPlugins/AnyImageImporter/AnyImageImporter.h>
 
 namespace {
 
@@ -167,21 +159,15 @@ create_player()
 
     return player;
 }
-
-void
-setURI(GstPlayer* player, const char* uri)
-{
-    gst_player_set_uri(player, uri);
-}
-
 } // namespace
 
 namespace Magnum {
-namespace Trade {
+namespace Video {
 
 struct GStVideoImporter::Play
 {
     GstPlayer* player{ nullptr };
+    Containers::Array<char> data;
     bool isOpened = false;
 };
 
@@ -199,7 +185,7 @@ GStVideoImporter::~GStVideoImporter()
 ImporterFeatures
 GStVideoImporter::doFeatures() const
 {
-    return ImporterFeature::OpenData | ImporterFeature::OpenState | ImporterFeature::FileCallback;
+    return ImporterFeature::OpenData | ImporterFeature::OpenFile | ImporterFeature::OpenURL;
 }
 
 bool
@@ -219,6 +205,7 @@ GStVideoImporter::doOpenFile(const std::string& filename)
         _p->player = create_player();
     }
 
+    gst_player_set_uri(_p->player, filename.c_str());
     _p->isOpened = true;
 }
 
@@ -226,13 +213,13 @@ void
 GStVideoImporter::doClose()
 {
     _p->isOpened = false;
-    Debug{} << "GStVideoImporter doOpenFile: ";
+    Debug{} << "GStVideoImporter doClose";
 }
 
 bool
 GStVideoImporter::init()
 {
-    Debug{} << "GStVideoImporter initialized";
+    Debug{} << "GStVideoImporter init";
     gst_init(NULL, NULL);
     print_version();
     return true;
@@ -248,20 +235,56 @@ GStVideoImporter::deInit()
 void
 GStVideoImporter::doPlay()
 {
+    Debug{} << "GStVideoImporter doPlay";
+    gst_player_play(_p->player);
 }
 
 void
 GStVideoImporter::doStop()
 {
+    Debug{} << "GStVideoImporter doStop";
+    gst_player_stop(_p->player);
 }
 
 void
 GStVideoImporter::doPause()
 {
+    Debug{} << "GStVideoImporter doStop";
+    gst_player_pause(_p->player);
 }
 
-} // namespace Trade
+Int
+GStVideoImporter::doGetFormat() const
+{
+    Debug{} << "GStVideoImporter doGetFormat";
+    return 0;
+}
+
+Float
+GStVideoImporter::doGetDuration() const
+{
+    Debug{} << "GStVideoImporter doGetDuration";
+    return gst_player_get_duration(_p->player) / 1000000000.0f;
+}
+
+Float
+GStVideoImporter::doGetPosition() const
+{
+    Debug{} << "GStVideoImporter doGetPosition";
+    return gst_player_get_position(_p->player) / 1000000000.0f;
+}
+
+Containers::Array<char>
+GStVideoImporter::doData()
+{
+    Containers::Array<char> copy(_p->data.size());
+    std::copy(_p->data.begin(), _p->data.end(), copy.begin());
+ 
+    return copy;
+}
+
+} // namespace Video
 } // namespace Magnum
 
-CORRADE_PLUGIN_REGISTER(GStVideoImporter, Magnum::Trade::GStVideoImporter,
-                        "cz.mosra.magnum.Trade.AbstractImporter/0.3.1")
+CORRADE_PLUGIN_REGISTER(GStVideoImporter, Magnum::Video::GStVideoImporter,
+                        "cz.mosra.magnum.Video.AbstractImporter/0.1")
