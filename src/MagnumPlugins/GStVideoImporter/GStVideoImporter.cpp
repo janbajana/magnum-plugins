@@ -209,13 +209,6 @@ GStVideoImporter::doOpenFile(const std::string& filename)
     _p->isOpened = true;
 }
 
-void
-GStVideoImporter::doClose()
-{
-    _p->isOpened = false;
-    Debug{} << "GStVideoImporter doClose";
-}
-
 bool
 GStVideoImporter::init()
 {
@@ -242,6 +235,7 @@ GStVideoImporter::doPlay()
 void
 GStVideoImporter::doStop()
 {
+    _p->isOpened = false;
     Debug{} << "GStVideoImporter doStop";
     gst_player_stop(_p->player);
 }

@@ -88,11 +88,10 @@ private:
     MAGNUM_GSTVIDEOIMPORTER_LOCAL ImporterFeatures doFeatures() const override;
     MAGNUM_GSTVIDEOIMPORTER_LOCAL bool doIsOpened() const override;
     MAGNUM_GSTVIDEOIMPORTER_LOCAL void doOpenFile(const std::string& filename) override;
-    MAGNUM_GSTVIDEOIMPORTER_LOCAL void doClose() override;
 
-    MAGNUM_GSTVIDEOIMPORTER_LOCAL void doPlay();
-    MAGNUM_GSTVIDEOIMPORTER_LOCAL void doStop();
-    MAGNUM_GSTVIDEOIMPORTER_LOCAL void doPause();
+    MAGNUM_GSTVIDEOIMPORTER_LOCAL void doPlay() override;
+    MAGNUM_GSTVIDEOIMPORTER_LOCAL void doStop() override;
+    MAGNUM_GSTVIDEOIMPORTER_LOCAL void doPause() override;
 
     MAGNUM_GSTVIDEOIMPORTER_LOCAL Int doGetFormat() const override;
     MAGNUM_GSTVIDEOIMPORTER_LOCAL Float doGetDuration() const override;
@@ -102,7 +101,6 @@ private:
     MAGNUM_GSTVIDEOIMPORTER_LOCAL void deInit();
 
     MAGNUM_GSTVIDEOIMPORTER_LOCAL Containers::Array<char> doData() override;
-
 
     Containers::Pointer<Play> _p{ nullptr };
 };
