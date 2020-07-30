@@ -52,25 +52,9 @@
 
 namespace {
 
-void
-print_video_info(GstPlayerVideoInfo* info)
-{
-    gint fps_n, fps_d;
-    guint par_n, par_d;
-
-    if (info == NULL)
-        return;
-
-    g_print("  width : %d\n", gst_player_video_info_get_width(info));
-    g_print("  height : %d\n", gst_player_video_info_get_height(info));
-    g_print("  max_bitrate : %d\n",
-            gst_player_video_info_get_max_bitrate(info));
-    g_print("  bitrate : %d\n", gst_player_video_info_get_bitrate(info));
-    gst_player_video_info_get_framerate(info, &fps_n, &fps_d);
-    g_print("  framerate : %.2f\n", static_cast<gdouble>(fps_n) / fps_d);
-    gst_player_video_info_get_pixel_aspect_ratio(info, &par_n, &par_d);
-    g_print("  pixel-aspect-ratio  %u:%u\n", par_n, par_d);
-}
+// context and display to use for gst gl stuff
+static GstGLContext* gl_context = NULL;
+static GstGLDisplay* gl_display = NULL;
 
 void
 print_version()
@@ -111,20 +95,21 @@ sync_bus_call(GstBus* /* bus */, GstMessage* msg, gpointer /* data */)
         gst_message_parse_context_type(msg, &context_type);
         g_print("GStreamer player needs context %s\n", context_type);
 
-        //   if (g_strcmp0 (context_type, GST_GL_DISPLAY_CONTEXT_TYPE) == 0) {
-        //     GstContext *display_context =
-        //         gst_context_new (GST_GL_DISPLAY_CONTEXT_TYPE, TRUE);
-        //     gst_context_set_gl_display (display_context, sdl_gl_display);
-        //     gst_element_set_context (GST_ELEMENT (msg->src), display_context);
-        //     return TRUE;
-        //   } else if (g_strcmp0 (context_type, "gst.gl.app_context") == 0) {
-        //     GstContext *app_context = gst_context_new ("gst.gl.app_context", TRUE);
-        //     GstStructure *s = gst_context_writable_structure (app_context);
-        //     gst_structure_set (s, "context", GST_TYPE_GL_CONTEXT, sdl_context,
-        //         NULL);
-        //     gst_element_set_context (GST_ELEMENT (msg->src), app_context);
-        //     return TRUE;
-        //   }
+        if (g_strcmp0(context_type, GST_GL_DISPLAY_CONTEXT_TYPE) == 0)
+        {
+            GstContext* display_context = gst_context_new(GST_GL_DISPLAY_CONTEXT_TYPE, TRUE);
+            gst_context_set_gl_display(display_context, gl_display);
+            gst_element_set_context(GST_ELEMENT(msg->src), display_context);
+            return TRUE;
+        }
+        else if (g_strcmp0(context_type, "gst.gl.app_context") == 0)
+        {
+            GstContext* app_context = gst_context_new("gst.gl.app_context", TRUE);
+            GstStructure* s = gst_context_writable_structure(app_context);
+            gst_structure_set(s, "context", GST_TYPE_GL_CONTEXT, gl_context, NULL);
+            gst_element_set_context(GST_ELEMENT(msg->src), app_context);
+            return TRUE;
+        }
         break;
     }
     default:
@@ -159,6 +144,24 @@ create_player()
 
     return player;
 }
+
+static void
+init_gl_display_and_context()
+{
+
+    // init gl display and context globally and once. either in UnityPluginLoad
+    // or if necessary with a issue plugin event
+
+    gl_display = gst_gl_display_new(); // (GstGLDisplay *)gst_gl_display_x11_new_with_display (sdl_display);
+    g_assert(GST_IS_GL_DISPLAY_X11(gl_display));
+    g_print("GStVideoImporter: gl display %p\n", gl_display);
+
+    guintptr raw_context = gst_gl_context_get_current_gl_context(GST_GL_PLATFORM_GLX);
+    gl_context = gst_gl_context_new_wrapped(gl_display, raw_context, GST_GL_PLATFORM_GLX, GST_GL_API_OPENGL);
+    g_assert(GST_IS_GL_CONTEXT(gl_context));
+    g_print("GStVideoImporter: raw context %lu, gst gl context %p\n", raw_context, gl_context);
+}
+
 } // namespace
 
 namespace Magnum {
@@ -214,6 +217,7 @@ GStVideoImporter::init()
 {
     Debug{} << "GStVideoImporter init";
     gst_init(NULL, NULL);
+    init_gl_display_and_context();
     print_version();
     return true;
 }
@@ -273,7 +277,7 @@ GStVideoImporter::doData()
 {
     Containers::Array<char> copy(_p->data.size());
     std::copy(_p->data.begin(), _p->data.end(), copy.begin());
- 
+
     return copy;
 }
 
