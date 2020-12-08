@@ -143,7 +143,13 @@ class MAGNUM_FREETYPEFONT_EXPORT FreeTypeFont: public AbstractFont {
         void doClose() override;
 
     private:
-        static MAGNUM_FREETYPEFONT_LOCAL FT_Library library;
+        static
+        /** @todo Windows don't support dllexported thread-local symbols, work
+            around that (access a local symbol through exported getter?) */
+        #if defined(CORRADE_BUILD_MULTITHREADED) && !defined(CORRADE_TARGET_WINDOWS)
+        CORRADE_THREAD_LOCAL
+        #endif
+        MAGNUM_FREETYPEFONT_LOCAL FT_Library library;
 
         FontFeatures MAGNUM_FREETYPEFONT_LOCAL doFeatures() const override;
 

@@ -1,6 +1,9 @@
 if "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2019" call "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/vcvarsall.bat" x64 || exit /b
 if "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2017" call "C:/Program Files (x86)/Microsoft Visual Studio/2017/Community/VC/Auxiliary/Build/vcvarsall.bat" x64 || exit /b
 if "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2015" call "C:/Program Files (x86)/Microsoft Visual Studio 14.0/VC/vcvarsall.bat" x64 || exit /b
+rem Unlike with Magnum itself which copies OpenAL DLL to its output directory,
+rem here we need to do that ourselves as we don't have Magnum's build dir in
+rem PATH
 set PATH=%APPVEYOR_BUILD_FOLDER%/openal/bin/Win64;%APPVEYOR_BUILD_FOLDER%\deps\bin;%APPVEYOR_BUILD_FOLDER%\devil\unicode;C:\Tools\vcpkg\installed\x64-windows\bin;%PATH%
 
 rem need to explicitly specify a 64-bit target, otherwise CMake+Ninja can't
@@ -24,11 +27,16 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug ^
 cmake --build . --target install || exit /b
 cd .. && cd .. || exit /b
 
-rem Build libPNG. As of 2019-08-23, vcpkg is broken on the 2015 image and needs
+rem Build libPNG. As of 2020-08-17, vcpkg is broken on the 2019 image and needs
 rem updating. Disabling the libPNG build there for now.
-IF "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2015" set EXCEPT_IF_VCPKG_IS_BROKEN=OFF
-IF NOT "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2015" set EXCEPT_IF_VCPKG_IS_BROKEN=ON
-IF NOT "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2015" vcpkg install libpng:x64-windows || exit /b
+IF "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2019" set EXCEPT_IF_VCPKG_IS_BROKEN=OFF
+IF NOT "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2019" set EXCEPT_IF_VCPKG_IS_BROKEN=ON
+IF NOT "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2019" vcpkg install libpng:x64-windows || exit /b
+
+rem Some dependencies are built on GitHub Actions and there the only available
+rem MSVC version is 2019. Better than nothing, but eh.
+IF "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2019" set ONLY_ON_MSVC2019=ON
+IF NOT "%APPVEYOR_BUILD_WORKER_IMAGE%" == "Visual Studio 2019" set ONLY_ON_MSVC2019=OFF
 
 rem build meshoptimizer
 IF NOT EXIST %APPVEYOR_BUILD_FOLDER%\v0.14.zip appveyor DownloadFile https://github.com/zeux/meshoptimizer/archive/v0.14.zip || exit /b
@@ -98,7 +106,8 @@ cmake .. ^
     -DWITH_DRFLACAUDIOIMPORTER=ON ^
     -DWITH_DRMP3AUDIOIMPORTER=ON ^
     -DWITH_DRWAVAUDIOIMPORTER=ON ^
-    -DWITH_FREETYPEFONT=OFF ^
+    -DWITH_FREETYPEFONT=%ONLY_ON_MSVC2019% ^
+    -DWITH_GLSLANGSHADERCONVERTER=%ONLY_ON_MSVC2019% ^
     -DWITH_HARFBUZZFONT=OFF ^
     -DWITH_ICOIMPORTER=ON ^
     -DWITH_JPEGIMAGECONVERTER=ON ^
@@ -109,6 +118,7 @@ cmake .. ^
     -DWITH_PNGIMAGECONVERTER=%EXCEPT_IF_VCPKG_IS_BROKEN% ^
     -DWITH_PNGIMPORTER=%EXCEPT_IF_VCPKG_IS_BROKEN% ^
     -DWITH_PRIMITIVEIMPORTER=ON ^
+    -DWITH_SPIRVTOOLSSHADERCONVERTER=%ONLY_ON_MSVC2019% ^
     -DWITH_STANFORDIMPORTER=ON ^
     -DWITH_STANFORDSCENECONVERTER=ON ^
     -DWITH_STBIMAGECONVERTER=ON ^

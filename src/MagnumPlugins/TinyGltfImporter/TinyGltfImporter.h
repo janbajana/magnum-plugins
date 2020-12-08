@@ -150,7 +150,10 @@ Import of skeleton, skin and morph data is not supported at the moment.
     the @cb{.ini} normalizeQuaternions @ce option, see
     @ref Trade-TinyGltfImporter-configuration "below". This doesn't affect
     spline-interpolated rotation tracks.
--   Skinning and morph targets are not supported
+-   Skin `skeleton` property is not imported, but you can retrieve it via
+    @ref SkinData::importerState() --- see @ref Trade-TinyGltfImporter-state
+    for more information
+-   Morph targets are not supported
 -   Animation tracks are always imported with
     @ref Animation::Extrapolation::Constant, because glTF doesn't support
     anything else
@@ -187,8 +190,7 @@ Import of skeleton, skin and morph data is not supported at the moment.
 @subsection Trade-TinyGltfImporter-behavior-lights Light import
 
 -   The importer supports the [KHR_lights_punctual](https://github.com/KhronosGroup/glTF/tree/master/extensions/2.0/Khronos/KHR_lights_punctual)
-    extension, supported by the official glTF Exporter in Blender 2.8.x.
-    -   Only light properties color, intensity and type are imported.
+    extension
 
 @subsection Trade-TinyGltfImporter-behavior-meshes Mesh import
 
@@ -266,38 +268,35 @@ fail.
 
 @subsection Trade-TinyGltfImporter-behavior-materials Material import
 
--   Subset of all material specs is currently imported as @ref PhongMaterialData,
-    including normal textures
--   Ambient color is always @cpp 0x000000_rgbf @ce (never a texture)
--   Unless explicitly enabled with the @cb{.ini} allowMaterialTextureCoordinateSets @ce
-    @ref Trade-TinyGltfImporter-configuration "configuration option", only the
-    first set of texture coordinates is supported.
--   If [KHR_texture_transform](https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_texture_transform/README.md)
-    is present, the imported material has @ref PhongMaterialData::Flag::TextureTransformation
-    set. All textures have to share the same transformation and the
-    transformation, if present, has to affect the first set of texture
-    coordinates.
--   For the Metallic/Roughness material spec ([in core](https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#metallic-roughness-material),
-    default):
-    -   The `baseColorTexture` field is used for diffuse texture, if present.
-        Otherwise, `baseColorFactor` is used for diffuse color, if present.
-        Otherwise, @cpp 0xffffff_rgbf @ce is used.
-    -   Specular color is always @cpp 0xffffff_rgbf @ce (never a texture)
-    -   Shininess is always @cpp 1.0f @ce
--   For the Specular/Glossiness material spec
-    ([KHR_materials_pbrSpecularGlossiness](https://github.com/KhronosGroup/glTF/tree/master/extensions/2.0/Khronos/KHR_materials_pbrSpecularGlossiness)
-    extension):
-    -   The `diffuseTexture` field is used for diffuse texture, if present.
-        Otherwise, `diffuseFactor` is used for diffuse color, if present.
-        Otherwise, @cpp 0xffffff_rgbf @ce is used.
-    -   The `specularGlossinessTexture` field is used for a specular texture,
-        if present (note that only the RGB channels should be used and the
-        alpha channel --- containing glossiness --- should be ignored).
-        Otherwise, `specularFactor` is used for specular color, if present.
-        Otherwise, @cpp 0xffffff_rgbf @ce is used.
-    -   Shininess is always @cpp 1.0f @ce
--   The [KHR_materials_unlit](https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_materials_unlit/README.md)
-    extension is currently not supported.
+-   Builtin [metallic/roughness](https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#metallic-roughness-material) material is imported always,
+    setting @ref MaterialType::PbrMetallicRoughness on the @ref MaterialData.
+    Unfortunately TinyGLTF doesn't provide a way to detect if
+    metallic/roughness properties are actually present, so this type is set
+    always.
+-   If the [KHR_materials_pbrSpecularGlossiness](https://github.com/KhronosGroup/glTF/tree/master/extensions/2.0/Khronos/KHR_materials_pbrSpecularGlossiness)
+    extension is present, its properties are imported with
+    @ref MaterialType::PbrSpecularGlossiness present in material types.
+-   Additional normal, occlusion and emissive maps are imported, together with
+    related properties
+-   If the [KHR_materials_unlit](https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_materials_unlit/README.md)
+    extension is present, @ref MaterialType::Flat is set in material types,
+    replacing @ref MaterialType::PbrMetallicRoughness or
+    @ref MaterialType::PbrSpecularGlossiness.
+-   If the [KHR_materials_clearcoat](https://github.com/KhronosGroup/glTF/tree/master/extensions/2.0/Khronos/KHR_materials_clearcoat)
+    extension is present, @ref MaterialType::PbrClearCoat is set in material
+    types, and a new layer with clearcoat properties is added
+-   Custom texture coordinate sets as well as [KHR_texture_transform](https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_texture_transform/README.md)
+    properties are imported on all textures.
+-   If the on-by-default @cb{.ini} phongMaterialFallback @ce
+    @ref Trade-TinyGltfImporter-configuration "configuration option" is
+    enabled, the importer provides a Phong fallback for backwards
+    compatibility:
+    -   @ref MaterialType::Phong is added to material types
+    -   Base color and base color texture along with custom texture coordinate
+        set and transformation, if present, is exposed as a diffuse color and
+        texture, unless already present together with specular color / texture
+        from the specular/glossiness material
+    -   All other @ref PhongMaterialData values are is kept at their defaults
 
 @subsection Trade-TinyGltfImporter-behavior-textures Texture and image import
 
@@ -396,6 +395,8 @@ importer-specific data accessors:
     structure
 -   @ref SceneData::importerState() returns pointer to the `tinygltf::Scene`
     structure
+-   @ref SkinData::importerState() returns pointer to the `tinygltf::Skin`
+    structure
 -   @ref TextureData::importerState() returns pointer to the
     `tinygltf::Texture` structure
 
@@ -465,7 +466,7 @@ class MAGNUM_TINYGLTFIMPORTER_EXPORT TinyGltfImporter: public AbstractImporter {
         MAGNUM_TINYGLTFIMPORTER_LOCAL std::string doLightName(UnsignedInt id) override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL UnsignedInt doLightCount() const override;
 
-        MAGNUM_TINYGLTFIMPORTER_LOCAL Int doDefaultScene() override;
+        MAGNUM_TINYGLTFIMPORTER_LOCAL Int doDefaultScene() const override;
 
         MAGNUM_TINYGLTFIMPORTER_LOCAL Containers::Optional<SceneData> doScene(UnsignedInt id) override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL Int doSceneForName(const std::string& name) override;
@@ -477,6 +478,11 @@ class MAGNUM_TINYGLTFIMPORTER_EXPORT TinyGltfImporter: public AbstractImporter {
         MAGNUM_TINYGLTFIMPORTER_LOCAL std::string doObject3DName(UnsignedInt id) override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL Containers::Pointer<ObjectData3D> doObject3D(UnsignedInt id) override;
 
+        MAGNUM_TINYGLTFIMPORTER_LOCAL UnsignedInt doSkin3DCount() const override;
+        MAGNUM_TINYGLTFIMPORTER_LOCAL Int doSkin3DForName(const std::string& name) override;
+        MAGNUM_TINYGLTFIMPORTER_LOCAL std::string doSkin3DName(UnsignedInt id) override;
+        MAGNUM_TINYGLTFIMPORTER_LOCAL Containers::Optional<SkinData3D> doSkin3D(UnsignedInt id) override;
+
         MAGNUM_TINYGLTFIMPORTER_LOCAL UnsignedInt doMeshCount() const override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL Int doMeshForName(const std::string& name) override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL std::string doMeshName(UnsignedInt id) override;
@@ -484,12 +490,12 @@ class MAGNUM_TINYGLTFIMPORTER_EXPORT TinyGltfImporter: public AbstractImporter {
         MAGNUM_TINYGLTFIMPORTER_LOCAL MeshAttribute doMeshAttributeForName(const std::string& name) override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL std::string doMeshAttributeName(UnsignedShort name) override;
 
-        MAGNUM_TINYGLTFIMPORTER_LOCAL bool materialTexture(const char* name, Int texture, Int texCoord, const tinygltf::Value& extensions, UnsignedInt& index, UnsignedInt& coordinateSet, Containers::Optional<Matrix3>& textureMatrix, PhongMaterialData::Flags& flags) const;
+        MAGNUM_TINYGLTFIMPORTER_LOCAL bool materialTexture(const char* name, UnsignedInt texture, UnsignedInt texCoord, const tinygltf::Value& extensions, Containers::Array<MaterialAttributeData>& attributes, MaterialAttribute attribute, MaterialAttribute matrixAttribute, MaterialAttribute coordinateAttribute) const;
 
         MAGNUM_TINYGLTFIMPORTER_LOCAL UnsignedInt doMaterialCount() const override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL Int doMaterialForName(const std::string& name) override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL std::string doMaterialName(UnsignedInt id) override;
-        MAGNUM_TINYGLTFIMPORTER_LOCAL Containers::Pointer<AbstractMaterialData> doMaterial(UnsignedInt id) override;
+        MAGNUM_TINYGLTFIMPORTER_LOCAL Containers::Optional<MaterialData> doMaterial(UnsignedInt id) override;
 
         MAGNUM_TINYGLTFIMPORTER_LOCAL UnsignedInt doTextureCount() const override;
         MAGNUM_TINYGLTFIMPORTER_LOCAL Int doTextureForName(const std::string& name) override;

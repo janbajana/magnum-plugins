@@ -43,12 +43,14 @@
 #include <Magnum/Mesh.h>
 #include <Magnum/PixelFormat.h>
 #include <Magnum/Math/CubicHermite.h>
+#include <Magnum/Math/Matrix3.h>
 #include <Magnum/Math/Matrix4.h>
 #include <Magnum/Math/Quaternion.h>
 #include <Magnum/Trade/AnimationData.h>
 #include <Magnum/Trade/CameraData.h>
 #include <Magnum/Trade/LightData.h>
 #include <Magnum/Trade/SceneData.h>
+#include <Magnum/Trade/SkinData.h>
 #include <Magnum/Trade/PhongMaterialData.h>
 #include <Magnum/Trade/TextureData.h>
 #include <Magnum/Trade/ImageData.h>
@@ -174,6 +176,7 @@ struct TinyGltfImporter::Document {
         camerasForName,
         lightsForName,
         scenesForName,
+        skinsForName,
         nodesForName,
         meshesForName,
         materialsForName,
@@ -227,7 +230,7 @@ void fillDefaultConfiguration(Utility::ConfigurationGroup& conf) {
     conf.setValue("optimizeQuaternionShortestPath", true);
     conf.setValue("normalizeQuaternions", true);
     conf.setValue("mergeAnimationClips", false);
-    conf.setValue("textureCoordinateYFlipInMaterial", false);
+    conf.setValue("phongMaterialFallback", true);
     conf.setValue("objectIdAttribute", "_OBJECT_ID");
 }
 
@@ -324,6 +327,14 @@ void TinyGltfImporter::doOpenData(const Containers::ArrayView<const char> data) 
         return;
     }
 
+    /* Bounds checks that can't be deferred to later. No, tinygltf doesn't
+       check for this. */
+    if(_d->model.defaultScene != -1 && UnsignedInt(_d->model.defaultScene) >= _d->model.scenes.size()) {
+        Error{} << "Trade::TinyGltfImporter::openData(): scene index" << _d->model.defaultScene << "out of bounds for" << _d->model.scenes.size() << "scenes";
+        doClose();
+        return;
+    }
+
     /* Treat meshes with multiple primitives as separate meshes. Each mesh gets
        duplicated as many times as is the size of the primitives array. */
     _d->meshSizeOffsets.emplace_back(0);
@@ -343,6 +354,13 @@ void TinyGltfImporter::doOpenData(const Containers::ArrayView<const char> data) 
 
         const Int mesh = _d->model.nodes[i].mesh;
         if(mesh != -1) {
+            /* tinygltf doesn't check for this either */
+            if(UnsignedInt(mesh) >= _d->model.meshes.size()) {
+                Error{} << "Trade::TinyGltfImporter::openData(): mesh index" << mesh << "out of bounds for" << _d->model.meshes.size() << "meshes";
+                doClose();
+                return;
+            }
+
             /* If a node has a mesh with multiple primitives, add nested nodes
                containing the other primitives after it */
             const std::size_t count = _d->model.meshes[mesh].primitives.size();
@@ -808,31 +826,66 @@ std::string TinyGltfImporter::doLightName(const UnsignedInt id) {
 Containers::Optional<LightData> TinyGltfImporter::doLight(UnsignedInt id) {
     const tinygltf::Light& light = _d->model.lights[id];
 
-    Color3 lightColor{float(light.color[0]), float(light.color[1]), float(light.color[2])};
-    Float lightIntensity{Float(light.intensity)};
-
-    LightData::Type lightType;
-
+    /* Light type */
+    LightData::Type type;
     if(light.type == "point") {
-        lightType = LightData::Type::Point;
+        type = LightData::Type::Point;
     } else if(light.type == "spot") {
-        lightType = LightData::Type::Spot;
+        type = LightData::Type::Spot;
     } else if(light.type == "directional") {
-        lightType = LightData::Type::Infinite;
-    } else if(light.type == "ambient") {
-        Error() << "Trade::TinyGltfImporter::light(): unsupported value for light type:" << light.type;
-        return Containers::NullOpt;
-    /* LCOV_EXCL_START */
+        type = LightData::Type::Directional;
     } else {
-        Error() << "Trade::TinyGltfImporter::light(): invalid value for light type:" << light.type;
+        Error{} << "Trade::TinyGltfImporter::light(): invalid light type" << light.type;
         return Containers::NullOpt;
     }
-    /* LCOV_EXCL_STOP */
 
-    return LightData{lightType, lightColor, lightIntensity, &light};
+    /* Light color */
+    Color3 color{NoInit};
+    if(light.color.size() == 3)
+        color = {Float(light.color[0]), Float(light.color[1]), Float(light.color[2])};
+    else if(light.color.size() == 0)
+        color = Color3{1.0f};
+    else {
+        Error{} << "Trade::TinyGltfImporter::light(): expected three values for a color, got" << light.color.size();
+        return Containers::NullOpt;
+    }
+
+    /* Spotlight cone angles. In glTF they're specified as half-angles (which
+       is also why the limit on outer angle is 90°, not 180°), to avoid
+       confusion report a potential error in the original half-angles and
+       double the angle only at the end. */
+    Rad innerConeAngle{NoInit}, outerConeAngle{NoInit};
+    if(type == LightData::Type::Spot) {
+        innerConeAngle = Rad{Float(light.spot.innerConeAngle)};
+        outerConeAngle = Rad{Float(light.spot.outerConeAngle)};
+
+        if(innerConeAngle < Rad(0.0_degf) || innerConeAngle >= outerConeAngle || outerConeAngle >= Rad(90.0_degf)) {
+            Error{} << "Trade::TinyGltfImporter::light(): inner and outer cone angle" << Deg(innerConeAngle) << "and" << Deg(outerConeAngle) << "out of allowed bounds";
+            return Containers::NullOpt;
+        }
+    } else innerConeAngle = outerConeAngle = 180.0_degf;
+
+    /* Tinygltf sets range to 0 instead of infinity when it's not present.
+       That's stupid because it would divide by zero, fix that. Even more
+       stupid is JSON not having ANY way to represent an infinity, FFS. */
+    Float range;
+    if(light.range == 0.0) range = Constants::inf();
+    else range = Float(light.range);
+
+    /* Range should be infinity for directional lights. Because there's no way
+       to represent infinity in JSON, directly suggest to remove the range
+       property, don't even bother printing the value. */
+    if(type == LightData::Type::Directional && range != Constants::inf()) {
+        Error{} << "Trade::TinyGltfImporter::light(): range can't be defined for a directional light";
+        return Containers::NullOpt;
+    }
+
+    /* As said above, glTF uses half-angles, while we have full angles (for
+       consistency with existing APIs such as OpenAL cone angles or math intersection routines as well as Blender). */
+    return LightData{type, color, Float(light.intensity), range, innerConeAngle*2.0f, outerConeAngle*2.0f, &light};
 }
 
-Int TinyGltfImporter::doDefaultScene() {
+Int TinyGltfImporter::doDefaultScene() const {
     /* While https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#scenes
        says that "When scene is undefined, runtime is not required to render
        anything at load time.", several official sample glTF models (e.g. the
@@ -843,6 +896,7 @@ Int TinyGltfImporter::doDefaultScene() {
     if(_d->model.defaultScene == -1 && !_d->model.scenes.empty())
         return 0;
 
+    /* Bounds-checked in doOpenData() */
     return _d->model.defaultScene;
 }
 
@@ -871,8 +925,14 @@ Containers::Optional<SceneData> TinyGltfImporter::doScene(UnsignedInt id) {
        nodes are children of them */
     std::vector<UnsignedInt> children;
     children.reserve(scene.nodes.size());
-    for(const std::size_t i: scene.nodes)
+    for(const Int i: scene.nodes) {
+        if(UnsignedInt(i) >= _d->model.nodes.size()) {
+            Error{} << "Trade::TinyGltfImporter::scene(): node index" << i << "out of bounds for" << _d->model.nodes.size() << "nodes";
+            return Containers::NullOpt;
+        }
+
         children.push_back(_d->nodeSizeOffsets[i]);
+    }
 
     return SceneData{{}, std::move(children), &scene};
 }
@@ -903,16 +963,35 @@ std::string TinyGltfImporter::doObject3DName(UnsignedInt id) {
 
 Containers::Pointer<ObjectData3D> TinyGltfImporter::doObject3D(UnsignedInt id) {
     const std::size_t originalNodeId = _d->nodeMap[id].first;
+    const std::size_t nodePrimitiveId = _d->nodeMap[id].second;
     const tinygltf::Node& node = _d->model.nodes[originalNodeId];
+
+    /* Checks that are common for mesh nodes and extra nodes for
+       multi-primitive meshes */
+    if(nodePrimitiveId || node.mesh != -1) {
+        const Int materialId = _d->model.meshes[node.mesh].primitives[nodePrimitiveId].material;
+        if(materialId != -1 && UnsignedInt(materialId) >= _d->model.materials.size()) {
+            Error{} << "Trade::TinyGltfImporter::object3D(): material index" << materialId << "out of bounds for" << _d->model.materials.size() << "materials";
+            return nullptr;
+        }
+
+        if(node.skin != -1 && UnsignedInt(node.skin) >= _d->model.skins.size()) {
+            Error{} << "Trade::TinyGltfImporter::object3D(): skin index" << node.skin << "out of bounds for" << _d->model.skins.size() << "skins";
+            return nullptr;
+        }
+    }
 
     /* This is an extra node added for multi-primitive meshes -- return it with
        no children, identity transformation and just a link to the particular
        mesh & material combo */
-    const std::size_t nodePrimitiveId = _d->nodeMap[id].second;
     if(nodePrimitiveId) {
+        /* This had to be already checked during file import as we remap for
+           multi-primitive meshes */
+        CORRADE_INTERNAL_ASSERT(UnsignedInt(node.mesh) <= _d->model.meshes.size());
+
         const UnsignedInt meshId = _d->meshSizeOffsets[node.mesh] + nodePrimitiveId;
         const Int materialId = _d->model.meshes[node.mesh].primitives[nodePrimitiveId].material;
-        return Containers::pointer(new MeshObjectData3D{{}, {}, {}, Vector3{1.0f}, meshId, materialId, &node});
+        return Containers::pointer(new MeshObjectData3D{{}, {}, {}, Vector3{1.0f}, meshId, materialId, node.skin, &node});
     }
 
     CORRADE_INTERNAL_ASSERT(node.rotation.size() == 0 || node.rotation.size() == 4);
@@ -931,8 +1010,14 @@ Containers::Pointer<ObjectData3D> TinyGltfImporter::doObject3D(UnsignedInt id) {
         /** @todo the test should fail with children.push_back(originalNodeId + i + 1); */
         children.push_back(_d->nodeSizeOffsets[originalNodeId] + i + 1);
     }
-    for(const std::size_t i: node.children)
+    for(const Int i: node.children) {
+        if(UnsignedInt(i) >= _d->model.nodes.size()) {
+            Error{} << "Trade::TinyGltfImporter::object3D(): child index" << i << "out of bounds for" << _d->model.nodes.size() << "nodes";
+            return nullptr;
+        }
+
         children.push_back(_d->nodeSizeOffsets[i]);
+    }
 
     /* According to the spec, order is T-R-S: first scale, then rotate, then
        translate (or translate*rotate*scale multiplication of matrices). Makes
@@ -965,7 +1050,11 @@ Containers::Pointer<ObjectData3D> TinyGltfImporter::doObject3D(UnsignedInt id) {
     }
 
     /* Node is a mesh */
-    if(node.mesh >= 0) {
+    if(node.mesh != -1) {
+        /* This had to be already checked during file import as we remap for
+           multi-primitive meshes */
+        CORRADE_INTERNAL_ASSERT(UnsignedInt(node.mesh) <= _d->model.meshes.size());
+
         /* Multi-primitive nodes are handled above */
         CORRADE_INTERNAL_ASSERT(_d->nodeMap[id].second == 0);
         CORRADE_INTERNAL_ASSERT(!_d->model.meshes[node.mesh].primitives.empty());
@@ -973,8 +1062,8 @@ Containers::Pointer<ObjectData3D> TinyGltfImporter::doObject3D(UnsignedInt id) {
         const UnsignedInt meshId = _d->meshSizeOffsets[node.mesh];
         const Int materialId = _d->model.meshes[node.mesh].primitives[0].material;
         return Containers::pointer(flags & ObjectFlag3D::HasTranslationRotationScaling ?
-            new MeshObjectData3D{std::move(children), translation, rotation, scaling, meshId, materialId, &node} :
-            new MeshObjectData3D{std::move(children), transformation, meshId, materialId, &node});
+            new MeshObjectData3D{std::move(children), translation, rotation, scaling, meshId, materialId, node.skin, &node} :
+            new MeshObjectData3D{std::move(children), transformation, meshId, materialId, node.skin, &node});
     }
 
     /* Unknown nodes are treated as Empty */
@@ -982,7 +1071,12 @@ Containers::Pointer<ObjectData3D> TinyGltfImporter::doObject3D(UnsignedInt id) {
     UnsignedInt instanceId = ~UnsignedInt{}; /* -1 */
 
     /* Node is a camera */
-    if(node.camera >= 0) {
+    if(node.camera != -1) {
+        if(UnsignedInt(node.camera) >= _d->model.cameras.size()) {
+            Error{} << "Trade::TinyGltfImporter::object3D(): camera index" << node.camera << "out of bounds for" << _d->model.cameras.size() << "cameras";
+            return nullptr;
+        }
+
         instanceType = ObjectInstanceType3D::Camera;
         instanceId = node.camera;
 
@@ -990,11 +1084,78 @@ Containers::Pointer<ObjectData3D> TinyGltfImporter::doObject3D(UnsignedInt id) {
     } else if(node.extensions.find("KHR_lights_punctual") != node.extensions.end()) {
         instanceType = ObjectInstanceType3D::Light;
         instanceId = UnsignedInt(node.extensions.at("KHR_lights_punctual").Get("light").Get<int>());
+
+        if(instanceId >= _d->model.lights.size()) {
+            Error{} << "Trade::TinyGltfImporter::object3D(): light index" << Int(instanceId) << "out of bounds for" << _d->model.lights.size() << "lights";
+            return nullptr;
+        }
     }
 
     return Containers::pointer(flags & ObjectFlag3D::HasTranslationRotationScaling ?
         new ObjectData3D{std::move(children), translation, rotation, scaling, instanceType, instanceId, &node} :
         new ObjectData3D{std::move(children), transformation, instanceType, instanceId, &node});
+}
+
+UnsignedInt TinyGltfImporter::doSkin3DCount() const {
+    return _d->model.skins.size();
+}
+
+Int TinyGltfImporter::doSkin3DForName(const std::string& name) {
+    if(!_d->skinsForName) {
+        _d->skinsForName.emplace();
+        _d->skinsForName->reserve(_d->model.skins.size());
+        for(std::size_t i = 0; i != _d->model.skins.size(); ++i)
+            _d->skinsForName->emplace(_d->model.skins[i].name, i);
+    }
+
+    const auto found = _d->skinsForName->find(name);
+    return found == _d->skinsForName->end() ? -1 : found->second;
+}
+
+std::string TinyGltfImporter::doSkin3DName(const UnsignedInt id) {
+    return _d->model.skins[id].name;
+}
+
+Containers::Optional<SkinData3D> TinyGltfImporter::doSkin3D(const UnsignedInt id) {
+    const tinygltf::Skin& skin = _d->model.skins[id];
+
+    if(skin.joints.empty()) {
+        Error{} << "Trade::TinyGltfImporter::skin3D(): skin has no joints";
+        return Containers::NullOpt;
+    }
+
+    /* Joint IDs */
+    Containers::Array<UnsignedInt> joints{Containers::NoInit, skin.joints.size()};
+    for(std::size_t i = 0; i != joints.size(); ++i) {
+        if(std::size_t(skin.joints[i]) >= _d->model.nodes.size()) {
+            Error{} << "Trade::TinyGltfImporter::skin3D(): target node" << skin.joints[i] << "out of bounds for" << _d->model.nodes.size() << "nodes";
+            return Containers::NullOpt;
+        }
+
+        joints[i] = skin.joints[i];
+    }
+
+    /* Inverse bind matrices. If there are none, default is identities */
+    Containers::Array<Matrix4> inverseBindMatrices{skin.joints.size()};
+    if(skin.inverseBindMatrices != -1) {
+        const tinygltf::Accessor* accessor = checkedAccessor(_d->model, "skin3D", skin.inverseBindMatrices);
+        if(!accessor) return Containers::NullOpt;
+
+        if(accessor->type != TINYGLTF_TYPE_MAT4 || accessor->componentType != TINYGLTF_COMPONENT_TYPE_FLOAT) {
+            Error{} << "Trade::TinyGltfImporter::skin3D(): inverse bind matrices have unexpected type" << accessor->type << Debug::nospace << "/" << Debug::nospace << accessor->componentType;
+            return Containers::NullOpt;
+        }
+
+        Containers::StridedArrayView1D<const Matrix4> data = Containers::arrayCast<1, const Matrix4>(bufferView(_d->model, *accessor));
+        if(data.size() != inverseBindMatrices.size()) {
+            Error{} << "Trade::TinyGltfImporter::skin3D(): invalid inverse bind matrix count, expected" << inverseBindMatrices.size() << "but got" << data.size();
+            return Containers::NullOpt;
+        }
+
+        Utility::copy(data, inverseBindMatrices);
+    }
+
+    return SkinData3D{std::move(joints), std::move(inverseBindMatrices), &skin};
 }
 
 UnsignedInt TinyGltfImporter::doMeshCount() const {
@@ -1397,35 +1558,22 @@ std::string TinyGltfImporter::doMaterialName(const UnsignedInt id) {
     return _d->model.materials[id].name;
 }
 
-/* textureMatrix should be an empty Optional when parsing the first texture.
-   The function will fill it and then use to check consistency of the transform
-   for subsequent textures. */
-bool TinyGltfImporter::materialTexture(const char* name, const Int texture, const Int texCoord, const tinygltf::Value& extensions, UnsignedInt& index, UnsignedInt& coordinateSet, Containers::Optional<Matrix3>& textureMatrix, PhongMaterialData::Flags& flags) const {
-    if(UnsignedInt(texture) >= _d->model.textures.size()) {
+bool TinyGltfImporter::materialTexture(const char* name, const UnsignedInt texture, UnsignedInt texCoord, const tinygltf::Value& extensions, Containers::Array<MaterialAttributeData>& attributes, const MaterialAttribute attribute, const MaterialAttribute matrixAttribute, const MaterialAttribute coordinateAttribute) const {
+    if(texture >= _d->model.textures.size()) {
         Error{} << "Trade::TinyGltfImporter::material():" << name << "index" << texture << "out of bounds for" << _d->model.textures.size() << "textures";
         return false;
-    }
-
-    if(texCoord != 0) {
-        if(!configuration().value<bool>("allowMaterialTextureCoordinateSets")) {
-            Error{} << "Trade::TinyGltfImporter::material(): multiple texture coordinate sets are not allowed by default, enable allowMaterialTextureCoordinateSets to import them";
-            return false;
-        }
-
-        coordinateSet = texCoord;
-        flags |= PhongMaterialData::Flag::TextureCoordinateSets;
     }
 
     /* Texture transform. Because texture coordinates were Y-flipped, we first
        unflip them back, apply the transform (which assumes origin at bottom
        left and Y down) and then flip the result again. Sanity of the following
        verified with https://github.com/KhronosGroup/glTF-Sample-Models/tree/master/2.0/TextureTransformTest */
-    Matrix3 matrix;
     bool hasTextureTransform = false;
     if(extensions.Type() == tinygltf::OBJECT_TYPE) {
         auto khrTextureTransform = extensions.Get("KHR_texture_transform");
         if(khrTextureTransform.Type() != tinygltf::NULL_TYPE) {
             hasTextureTransform = true;
+            Matrix3 matrix;
 
             /* If material needs an Y-flip, the mesh doesn't have the texture
                coordinates flipped and thus we don't need to unflip them first */
@@ -1433,11 +1581,12 @@ bool TinyGltfImporter::materialTexture(const char* name, const Int texture, cons
                 matrix = Matrix3::translation(Vector2::yAxis(1.0f))*
                          Matrix3::scaling(Vector2::yScale(-1.0f));
 
+            /* The extension can override texture coordinate index (for example
+               to have the unextended coordinates already transformed, and
+               applying transformation to a different set) */
             auto transformTexCoord = khrTextureTransform.Get("texCoord");
-            if(transformTexCoord.Type() != tinygltf::NULL_TYPE) {
-                Error{} << "Trade::TinyGltfImporter::material(): transform of multiple texture coordinate sets is not supported";
-                return false;
-            }
+            if(transformTexCoord.Type() != tinygltf::NULL_TYPE)
+                texCoord = transformTexCoord.Get<int>();
 
             auto scale = khrTextureTransform.Get("scale");
             if(scale.Type() != tinygltf::NULL_TYPE) {
@@ -1468,173 +1617,418 @@ bool TinyGltfImporter::materialTexture(const char* name, const Int texture, cons
             matrix = Matrix3::translation(Vector2::yAxis(1.0f))*
                      Matrix3::scaling(Vector2::yScale(-1.0f))*matrix;
 
-            /* Save the texture matrix if this is the first time. Enable flag
-               always so it's set even if the first texture had no transform
-               and the second had an identity transform. */
-            if(!textureMatrix) textureMatrix = matrix;
-            flags |= PhongMaterialData::Flag::TextureTransformation;
+            arrayAppend(attributes, Containers::InPlaceInit, matrixAttribute, matrix);
         }
     }
 
     /* In case the material had no texture transformation but still needs an
        Y-flip, put it there */
     if(!hasTextureTransform && _d->textureCoordinateYFlipInMaterial) {
-        matrix =
+        arrayAppend(attributes, Containers::InPlaceInit, matrixAttribute,
             Matrix3::translation(Vector2::yAxis(1.0f))*
-            Matrix3::scaling(Vector2::yScale(-1.0f));
-
-        /* Save the texture matrix if this is the first time */
-        if(!textureMatrix) {
-            textureMatrix = matrix;
-            flags |= PhongMaterialData::Flag::TextureTransformation;
-        }
+            Matrix3::scaling(Vector2::yScale(-1.0f)));
     }
 
-    /* If there's no texture matrix and we have a non-identity matrix or if
-       there is a texture matrix and we have something else, it's an error.
-       This restriction can be lifted once we support more than one texture
-       coordinate set for a material or per-texture transformation. */
-    if((!textureMatrix && matrix != Matrix3{}) ||
-       (textureMatrix && matrix != *textureMatrix)) {
-        Error{} << "Trade::TinyGltfImporter::material():" << name << "has an inconsistent texture transform, expected" << Debug::newline << (textureMatrix ? *textureMatrix : Matrix3{}) << "but got" << Debug::newline << matrix;
-        return false;
-    }
+    /* Add texture coordinate set if non-zero. The KHR_texture_transform
+       could be modifying it, so do that after */
+    if(texCoord != 0)
+        arrayAppend(attributes, Containers::InPlaceInit, coordinateAttribute, texCoord);
 
-    /* If this texture didn't have a transformation, set it to an identity so
-       the following textures can check that the transform is consistent. If it
-       would stay a NullOpt, the following calls would think these are the
-       first texture for the material and check nothing. */
-    if(!textureMatrix) textureMatrix = Matrix3{};
+    /* In some cases (when dealing with packed textures), we're parsing &
+       adding texture coordinates and matrix multiple times, but adding the
+       packed texture ID just once. In other cases the attribute is invalid. */
+    if(attribute != MaterialAttribute{})
+        arrayAppend(attributes, Containers::InPlaceInit, attribute, texture);
 
-    index = texture;
     return true;
 }
 
-Containers::Pointer<AbstractMaterialData> TinyGltfImporter::doMaterial(const UnsignedInt id) {
+Containers::Optional<MaterialData> TinyGltfImporter::doMaterial(const UnsignedInt id) {
     const tinygltf::Material& material = _d->model.materials[id];
 
-    /* Alpha mode and mask, double sided */
-    const Float alphaMask = material.alphaCutoff;
+    Containers::Array<UnsignedInt> layers;
+    Containers::Array<MaterialAttributeData> attributes;
+    MaterialTypes types;
 
-    MaterialAlphaMode alphaMode;
-    if(material.alphaMode == "OPAQUE")
-        alphaMode = MaterialAlphaMode::Opaque;
-    else if(material.alphaMode == "BLEND")
-        alphaMode = MaterialAlphaMode::Blend;
+    /* Alpha mode and mask, double sided */
+    if(material.alphaMode == "BLEND")
+        arrayAppend(attributes, Containers::InPlaceInit, MaterialAttribute::AlphaBlend, true);
     else if(material.alphaMode == "MASK")
-        alphaMode = MaterialAlphaMode::Mask;
-    else {
+        arrayAppend(attributes, Containers::InPlaceInit, MaterialAttribute::AlphaMask, Float(material.alphaCutoff));
+    else if(material.alphaMode != "OPAQUE") {
         Error{} << "Trade::TinyGltfImporter::material(): unknown alpha mode" << material.alphaMode;
-        return nullptr;
+        return Containers::NullOpt;
     }
 
-    PhongMaterialData::Flags flags;
     if(material.doubleSided)
-        flags |= PhongMaterialData::Flag::DoubleSided;
+        arrayAppend(attributes, Containers::InPlaceInit, MaterialAttribute::DoubleSided, true);
 
-    /* Textures */
-    Containers::Optional<Matrix3> textureMatrix;
-    UnsignedInt diffuseTexture{}, specularTexture{};
-    UnsignedInt diffuseCoordinateSet{}, specularCoordinateSet{};
-    Color4 diffuseColor{1.0f};
-    Color3 specularColor{1.0f};
-    Float shininess{80.0f};
+    /* Core metallic/roughness material */
+    /** @todo is there ANY way to check if these properties are actually
+        present?! tinygltf FFS */
+    {
+        types |= MaterialType::PbrMetallicRoughness;
 
-    auto khrMaterialsPbrSpecularGlossiness = material.extensions.find("KHR_materials_pbrSpecularGlossiness");
-    if(khrMaterialsPbrSpecularGlossiness != material.extensions.end()) {
-        auto diffuseTextureValue = khrMaterialsPbrSpecularGlossiness->second.Get("diffuseTexture");
-        if(diffuseTextureValue.Type() != tinygltf::NULL_TYPE) {
-            if(!materialTexture("diffuseTexture",
-                diffuseTextureValue.Get("index").Get<int>(),
-                diffuseTextureValue.Get("texCoord").Get<int>(),
-                diffuseTextureValue.Get("extensions"),
-                diffuseTexture, diffuseCoordinateSet, textureMatrix, flags))
-                return nullptr;
+        if(Vector4d::from(material.pbrMetallicRoughness.baseColorFactor.data()) != Vector4d{1.0})
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::BaseColor,
+                Color4{Vector4d::from(material.pbrMetallicRoughness.baseColorFactor.data())});
+        if(material.pbrMetallicRoughness.metallicFactor != 1.0)
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::Metalness,
+                Float(material.pbrMetallicRoughness.metallicFactor));
+        if(material.pbrMetallicRoughness.roughnessFactor != 1.0)
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::Roughness,
+                Float(material.pbrMetallicRoughness.roughnessFactor));
 
-            flags |= PhongMaterialData::Flag::DiffuseTexture;
-        }
-
-        auto specularTextureValue = khrMaterialsPbrSpecularGlossiness->second.Get("specularGlossinessTexture");
-        if(specularTextureValue.Type() != tinygltf::NULL_TYPE) {
-            if(!materialTexture("specularGlossinessTexture",
-                specularTextureValue.Get("index").Get<int>(),
-                specularTextureValue.Get("texCoord").Get<int>(),
-                specularTextureValue.Get("extensions"),
-                specularTexture, specularCoordinateSet, textureMatrix, flags))
-                return nullptr;
-
-            flags |= PhongMaterialData::Flag::SpecularTexture;
-        }
-
-        /* Colors */
-        auto diffuseFactorValue = khrMaterialsPbrSpecularGlossiness->second.Get("diffuseFactor");
-        if(diffuseFactorValue.Type() != tinygltf::NULL_TYPE) {
-            diffuseColor = Vector4{Vector4d{
-                diffuseFactorValue.Get(0).Get<double>(),
-                diffuseFactorValue.Get(1).Get<double>(),
-                diffuseFactorValue.Get(2).Get<double>(),
-                diffuseFactorValue.Get(3).Get<double>()}};
-        }
-
-        auto specularColorValue = khrMaterialsPbrSpecularGlossiness->second.Get("specularFactor");
-        if(specularColorValue.Type() != tinygltf::NULL_TYPE) {
-            specularColor = Vector3{Vector3d{
-                specularColorValue.Get(0).Get<double>(),
-                specularColorValue.Get(1).Get<double>(),
-                specularColorValue.Get(2).Get<double>()}};
-        }
-
-    /* From the core Metallic/Roughness we get just the base color / texture */
-    } else {
-        const Int index = material.pbrMetallicRoughness.baseColorTexture.index;
-        if(index != -1) {
-            if(!materialTexture("baseColorTexture", index,
+        const Int baseColorTexture = material.pbrMetallicRoughness.baseColorTexture.index;
+        if(baseColorTexture != -1) {
+            if(!materialTexture("baseColorTexture", baseColorTexture,
                 material.pbrMetallicRoughness.baseColorTexture.texCoord,
                 /* YES, you guessed right, this does a deep copy of the nested
                    std::maps because tinygltf is SO GREAT that there's NO WAY
                    to access extension structures in a consistent way */
                 tinygltf::Value(material.pbrMetallicRoughness.baseColorTexture.extensions),
-                diffuseTexture, diffuseCoordinateSet, textureMatrix, flags))
-                return nullptr;
-
-            flags |= PhongMaterialData::Flag::DiffuseTexture;
+                attributes,
+                MaterialAttribute::BaseColorTexture,
+                MaterialAttribute::BaseColorTextureMatrix,
+                MaterialAttribute::BaseColorTextureCoordinates)
+            )
+                return Containers::NullOpt;
         }
 
-        diffuseColor = Vector4{Vector4d::from(material.pbrMetallicRoughness.baseColorFactor.data())};
-    }
-
-    /* Normal texture */
-    UnsignedInt normalTexture{};
-    UnsignedInt normalCoordinateSet{};
-    {
-        const Int index = material.normalTexture.index;
-        if(index != -1) {
-            if(!materialTexture("normalTexture", index,
-                material.normalTexture.texCoord,
+        const Int metallicRoughnessTexture = material.pbrMetallicRoughness.metallicRoughnessTexture.index;
+        if(metallicRoughnessTexture != -1) {
+            if(!materialTexture("metallicRoughnessTexture",
+                metallicRoughnessTexture,
+                material.pbrMetallicRoughness.metallicRoughnessTexture.texCoord,
                 /* YES, you guessed right, this does a deep copy of the nested
                    std::maps because tinygltf is SO GREAT that there's NO WAY
                    to access extension structures in a consistent way */
-                tinygltf::Value(material.normalTexture.extensions),
-                normalTexture, normalCoordinateSet, textureMatrix, flags))
-                return nullptr;
+                tinygltf::Value(material.pbrMetallicRoughness.metallicRoughnessTexture.extensions),
+                attributes,
+                MaterialAttribute::NoneRoughnessMetallicTexture,
+                MaterialAttribute::MetalnessTextureMatrix,
+                MaterialAttribute::MetalnessTextureCoordinates)
+            )
+                return Containers::NullOpt;
 
-            flags |= PhongMaterialData::Flag::NormalTexture;
+            /* Add the matrix/coordinates attributes also for the roughness
+               texture, but skip adding the texture ID again */
+            CORRADE_INTERNAL_ASSERT_OUTPUT(materialTexture("metallicRoughnessTexture",
+                metallicRoughnessTexture,
+                material.pbrMetallicRoughness.metallicRoughnessTexture.texCoord,
+                /* YES, you guessed right, this does a deep copy of the nested
+                   std::maps because tinygltf is SO GREAT that there's NO WAY
+                   to access extension structures in a consistent way */
+                tinygltf::Value(material.pbrMetallicRoughness.metallicRoughnessTexture.extensions),
+                attributes,
+                MaterialAttribute{},
+                MaterialAttribute::RoughnessTextureMatrix,
+                MaterialAttribute::RoughnessTextureCoordinates));
         }
     }
 
-    /* Put things together */
-    Containers::Pointer<PhongMaterialData> data{Containers::InPlaceInit, flags,
-        0x000000ff_rgbaf, 0u, 0u,
-        diffuseColor, diffuseTexture, diffuseCoordinateSet,
-        specularColor, specularTexture, specularCoordinateSet,
-        normalTexture, normalCoordinateSet,
-        textureMatrix ? *textureMatrix : Matrix3{},
-        alphaMode, alphaMask, shininess, &material};
+    /* Specular/glossiness material */
+    auto khrMaterialsPbrSpecularGlossiness = material.extensions.find("KHR_materials_pbrSpecularGlossiness");
+    if(khrMaterialsPbrSpecularGlossiness != material.extensions.end()) {
+        types |= MaterialType::PbrSpecularGlossiness;
 
-    /* Needs to be explicit on GCC 4.8 and Clang 3.8 so it can properly upcast
-       the pointer. Just std::move() works as well, but that gives a warning
-       on GCC 9. */
-    return Containers::Pointer<AbstractMaterialData>{std::move(data)};
+        auto diffuseColor = khrMaterialsPbrSpecularGlossiness->second.Get("diffuseFactor");
+        if(diffuseColor.Type() != tinygltf::NULL_TYPE) {
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::DiffuseColor, Vector4{Vector4d{
+                diffuseColor.Get(0).Get<double>(),
+                diffuseColor.Get(1).Get<double>(),
+                diffuseColor.Get(2).Get<double>(),
+                diffuseColor.Get(3).Get<double>()}});
+        }
+
+        auto specularColor = khrMaterialsPbrSpecularGlossiness->second.Get("specularFactor");
+        if(specularColor.Type() != tinygltf::NULL_TYPE) {
+            arrayAppend(attributes, Containers::InPlaceInit,
+                /* Specular is 3-component in glTF, alpha should be 0 to not
+                   affect transparent materials */
+                MaterialAttribute::SpecularColor, Color4{Vector3{Vector3d{
+                specularColor.Get(0).Get<double>(),
+                specularColor.Get(1).Get<double>(),
+                specularColor.Get(2).Get<double>()}}, 0.0f});
+        }
+
+        auto glossiness = khrMaterialsPbrSpecularGlossiness->second.Get("glossinessFactor");
+        if(glossiness.Type() != tinygltf::NULL_TYPE) {
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::Glossiness,
+                Float(glossiness.Get<double>()));
+        }
+
+        auto diffuseTexture = khrMaterialsPbrSpecularGlossiness->second.Get("diffuseTexture");
+        if(diffuseTexture.Type() != tinygltf::NULL_TYPE) {
+            if(!materialTexture("diffuseTexture",
+                diffuseTexture.Get("index").Get<int>(),
+                diffuseTexture.Get("texCoord").Get<int>(),
+                diffuseTexture.Get("extensions"),
+                attributes,
+                MaterialAttribute::DiffuseTexture,
+                MaterialAttribute::DiffuseTextureMatrix,
+                MaterialAttribute::DiffuseTextureCoordinates)
+            )
+                return Containers::NullOpt;
+        }
+
+        auto specularGlossinessTexture = khrMaterialsPbrSpecularGlossiness->second.Get("specularGlossinessTexture");
+        if(specularGlossinessTexture.Type() != tinygltf::NULL_TYPE) {
+            if(!materialTexture("specularGlossinessTexture",
+                specularGlossinessTexture.Get("index").Get<int>(),
+                specularGlossinessTexture.Get("texCoord").Get<int>(),
+                specularGlossinessTexture.Get("extensions"),
+                attributes,
+                MaterialAttribute::SpecularGlossinessTexture,
+                MaterialAttribute::SpecularTextureMatrix,
+                MaterialAttribute::SpecularTextureCoordinates)
+            )
+                return Containers::NullOpt;
+
+            /* Add the matrix/coordinates attributes also for the glossiness
+               texture, but skip adding the texture ID again */
+            CORRADE_INTERNAL_ASSERT_OUTPUT(materialTexture(
+                "specularGlossinessTexture",
+                specularGlossinessTexture.Get("index").Get<int>(),
+                specularGlossinessTexture.Get("texCoord").Get<int>(),
+                specularGlossinessTexture.Get("extensions"),
+                attributes,
+                MaterialAttribute{},
+                MaterialAttribute::GlossinessTextureMatrix,
+                MaterialAttribute::GlossinessTextureCoordinates));
+        }
+    }
+
+    /* Unlit material -- reset all types and add just Flat */
+    auto khrMaterialsUnlit = material.extensions.find("KHR_materials_unlit");
+    if(khrMaterialsUnlit != material.extensions.end()) {
+        types = MaterialType::Flat;
+    }
+
+    /* Normal texture */
+    const Int normalTexture = material.normalTexture.index;
+    if(normalTexture != -1) {
+        if(!materialTexture("normalTexture", normalTexture,
+            material.normalTexture.texCoord,
+            /* YES, you guessed right, this does a deep copy of the nested
+                std::maps because tinygltf is SO GREAT that there's NO WAY
+                to access extension structures in a consistent way */
+            tinygltf::Value(material.normalTexture.extensions),
+            attributes,
+            MaterialAttribute::NormalTexture,
+            MaterialAttribute::NormalTextureMatrix,
+            MaterialAttribute::NormalTextureCoordinates)
+        )
+            return Containers::NullOpt;
+
+        if(material.normalTexture.scale != 1.0)
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::NormalTextureScale,
+                Float(material.normalTexture.scale));
+    }
+
+    /* Occlusion texture */
+    const Int occlusionTexture = material.occlusionTexture.index;
+    if(occlusionTexture != -1) {
+        if(!materialTexture("occlusionTexture", occlusionTexture,
+            material.occlusionTexture.texCoord,
+            /* YES, you guessed right, this does a deep copy of the nested
+                std::maps because tinygltf is SO GREAT that there's NO WAY
+                to access extension structures in a consistent way */
+            tinygltf::Value(material.occlusionTexture.extensions),
+            attributes,
+            MaterialAttribute::OcclusionTexture,
+            MaterialAttribute::OcclusionTextureMatrix,
+            MaterialAttribute::OcclusionTextureCoordinates)
+        )
+            return Containers::NullOpt;
+
+        if(material.occlusionTexture.strength != 1.0)
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::OcclusionTextureStrength,
+                Float(material.occlusionTexture.strength));
+    }
+
+    /* Emissive factor & texture */
+    if(Vector3d::from(material.emissiveFactor.data()) != Vector3d{0.0})
+        arrayAppend(attributes, Containers::InPlaceInit,
+            MaterialAttribute::EmissiveColor,
+            Color3{Vector3d::from(material.emissiveFactor.data())});
+    const Int emissiveTexture = material.emissiveTexture.index;
+    if(emissiveTexture != -1) {
+        if(!materialTexture("emissiveTexture", emissiveTexture,
+            material.emissiveTexture.texCoord,
+            /* YES, you guessed right, this does a deep copy of the nested
+                std::maps because tinygltf is SO GREAT that there's NO WAY
+                to access extension structures in a consistent way */
+            tinygltf::Value(material.emissiveTexture.extensions),
+            attributes,
+            MaterialAttribute::EmissiveTexture,
+            MaterialAttribute::EmissiveTextureMatrix,
+            MaterialAttribute::EmissiveTextureCoordinates)
+        )
+            return Containers::NullOpt;
+    }
+
+    /* Phong material fallback for backwards compatibility */
+    if(configuration().value<bool>("phongMaterialFallback")) {
+        /* This adds a Phong type even to Flat materials because that's exactly
+           how it behaved before */
+        types |= MaterialType::Phong;
+
+        /* Create Diffuse attributes from BaseColor */
+        Containers::Optional<Color4> diffuseColor;
+        Containers::Optional<UnsignedInt> diffuseTexture;
+        Containers::Optional<Matrix3> diffuseTextureMatrix;
+        Containers::Optional<UnsignedInt> diffuseTextureCoordinates;
+        for(const MaterialAttributeData& attribute: attributes) {
+            if(attribute.name() == "BaseColor")
+                diffuseColor = attribute.value<Color4>();
+            else if(attribute.name() == "BaseColorTexture")
+                diffuseTexture = attribute.value<UnsignedInt>();
+            else if(attribute.name() == "BaseColorTextureMatrix")
+                diffuseTextureMatrix = attribute.value<Matrix3>();
+            else if(attribute.name() == "BaseColorTextureCoordinates")
+                diffuseTextureCoordinates = attribute.value<UnsignedInt>();
+        }
+
+        /* But if there already are those from the specular/glossiness
+           material, don't add them again. Has to be done in a separate pass
+           to avoid resetting too early. */
+        for(const MaterialAttributeData& attribute: attributes) {
+            if(attribute.name() == "DiffuseColor")
+                diffuseColor = Containers::NullOpt;
+            else if(attribute.name() == "DiffuseTexture")
+                diffuseTexture = Containers::NullOpt;
+            else if(attribute.name() == "DiffuseTextureMatrix")
+                diffuseTextureMatrix = Containers::NullOpt;
+            else if(attribute.name() == "DiffuseTextureCoordinates")
+                diffuseTextureCoordinates = Containers::NullOpt;
+        }
+
+        if(diffuseColor)
+            arrayAppend(attributes, Containers::InPlaceInit, MaterialAttribute::DiffuseColor, *diffuseColor);
+        if(diffuseTexture)
+            arrayAppend(attributes, Containers::InPlaceInit, MaterialAttribute::DiffuseTexture, *diffuseTexture);
+        if(diffuseTextureMatrix)
+            arrayAppend(attributes, Containers::InPlaceInit, MaterialAttribute::DiffuseTextureMatrix, *diffuseTextureMatrix);
+        if(diffuseTextureCoordinates)
+            arrayAppend(attributes, Containers::InPlaceInit, MaterialAttribute::DiffuseTextureCoordinates, *diffuseTextureCoordinates);
+    }
+
+    /* Clear coat layer -- needs to be after all base material attributes */
+    auto khrMaterialsClearCoat = material.extensions.find("KHR_materials_clearcoat");
+    if(khrMaterialsClearCoat != material.extensions.end()) {
+        types |= MaterialType::PbrClearCoat;
+
+        /* Add a new layer -- this works both if layers are empty and if
+           there's something already */
+        arrayAppend(layers, UnsignedInt(attributes.size()));
+        arrayAppend(attributes, Containers::InPlaceInit, MaterialLayer::ClearCoat);
+
+        auto clearcoatFactor = khrMaterialsClearCoat->second.Get("clearcoatFactor");
+        if(clearcoatFactor.Type() != tinygltf::NULL_TYPE) {
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::LayerFactor,
+                Float(clearcoatFactor.Get<double>()));
+        } else {
+            /* Default factor is 0, i.e. the layer disabled. I assume this is
+               in order to be ready for when clearcoat is part of the material
+               object and not an extension (in which case the values would be
+               always present and thus it make sense to have clearcoat layers
+               disabled by default). Original reasoning here:
+               https://github.com/KhronosGroup/glTF/pull/1677#issuecomment-543268157
+
+               In our MaterialData API the presence of the layer alone enables
+               it and thus a default of 1 makes sense -- so one can specify
+               just the texture, without the factor as well. */
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::LayerFactor, 0.0f);
+        }
+
+        auto clearcoatTexture = khrMaterialsClearCoat->second.Get("clearcoatTexture");
+        if(clearcoatTexture.Type() != tinygltf::NULL_TYPE) {
+            if(!materialTexture("clearcoatTexture",
+                clearcoatTexture.Get("index").Get<int>(),
+                clearcoatTexture.Get("texCoord").Get<int>(),
+                clearcoatTexture.Get("extensions"),
+                attributes,
+                MaterialAttribute::LayerFactorTexture,
+                MaterialAttribute::LayerFactorTextureMatrix,
+                MaterialAttribute::LayerFactorTextureCoordinates)
+            )
+                return Containers::NullOpt;
+        }
+
+        auto clearcoatRoughnessFactor = khrMaterialsClearCoat->second.Get("clearcoatRoughnessFactor");
+        if(clearcoatRoughnessFactor.Type() != tinygltf::NULL_TYPE) {
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::Roughness,
+                Float(clearcoatRoughnessFactor.Get<double>()));
+        } else {
+            /* Default factor in glTF is 0, not 1. I assume there's a similar
+               reasoning as with the clearcoatFactor above, but it makes less
+               sense. */
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::Roughness, 0.0f);
+        }
+
+        auto clearcoatRoughnessTexture = khrMaterialsClearCoat->second.Get("clearcoatRoughnessTexture");
+        if(clearcoatRoughnessTexture.Type() != tinygltf::NULL_TYPE) {
+            if(!materialTexture("clearcoatRoughnessTexture",
+                clearcoatRoughnessTexture.Get("index").Get<int>(),
+                clearcoatRoughnessTexture.Get("texCoord").Get<int>(),
+                clearcoatRoughnessTexture.Get("extensions"),
+                attributes,
+                MaterialAttribute::RoughnessTexture,
+                MaterialAttribute::RoughnessTextureMatrix,
+                MaterialAttribute::RoughnessTextureCoordinates)
+            )
+                return Containers::NullOpt;
+
+            /* The extension description doesn't mention it, but the schema
+               says the clearcoat roughness is actually in the G channel:
+               https://github.com/KhronosGroup/glTF/blob/dc5519b9ce9834f07c30ec4c957234a0cd6280a2/extensions/2.0/Khronos/KHR_materials_clearcoat/schema/glTF.KHR_materials_clearcoat.schema.json#L32 */
+            arrayAppend(attributes, Containers::InPlaceInit,
+                MaterialAttribute::RoughnessTextureSwizzle,
+                MaterialTextureSwizzle::G);
+        }
+
+        auto clearcoatNormalTexture = khrMaterialsClearCoat->second.Get("clearcoatNormalTexture");
+        if(clearcoatNormalTexture.Type() != tinygltf::NULL_TYPE) {
+            if(!materialTexture("clearcoatNormalTexture",
+                clearcoatNormalTexture.Get("index").Get<int>(),
+                clearcoatNormalTexture.Get("texCoord").Get<int>(),
+                clearcoatNormalTexture.Get("extensions"),
+                attributes,
+                MaterialAttribute::NormalTexture,
+                MaterialAttribute::NormalTextureMatrix,
+                MaterialAttribute::NormalTextureCoordinates)
+            )
+                return Containers::NullOpt;
+
+            auto scale = clearcoatNormalTexture.Get("scale");
+            if(scale.Type() != tinygltf::NULL_TYPE) {
+                arrayAppend(attributes, Containers::InPlaceInit,
+                    MaterialAttribute::NormalTextureScale,
+                    Float(scale.Get<double>()));
+            }
+        }
+    }
+
+    /* If there's any layer, add the final attribute count */
+    arrayAppend(layers, UnsignedInt(attributes.size()));
+
+    /* Can't use growable deleters in a plugin, convert back to the default
+       deleter */
+    arrayShrink(layers);
+    arrayShrink(attributes, Containers::DefaultInit);
+    return MaterialData{types, std::move(attributes), std::move(layers), &material};
 }
 
 UnsignedInt TinyGltfImporter::doTextureCount() const {
@@ -1882,4 +2276,4 @@ const void* TinyGltfImporter::doImporterState() const {
 }}
 
 CORRADE_PLUGIN_REGISTER(TinyGltfImporter, Magnum::Trade::TinyGltfImporter,
-    "cz.mosra.magnum.Trade.AbstractImporter/0.3.1")
+    "cz.mosra.magnum.Trade.AbstractImporter/0.3.3")

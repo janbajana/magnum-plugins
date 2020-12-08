@@ -24,7 +24,6 @@ mkdir build-emscripten && cd build-emscripten
 cmake .. \
     -DCORRADE_RC_EXECUTABLE=$HOME/deps-native/bin/corrade-rc \
     -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten-wasm.cmake" \
-    -DEMSCRIPTEN_PREFIX=$(echo /usr/local/Cellar/emscripten/*/libexec) \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG -O1" \
     -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-O1" \
@@ -41,7 +40,6 @@ mkdir build-emscripten && cd build-emscripten
 cmake .. \
     -DCORRADE_RC_EXECUTABLE=$HOME/deps-native/bin/corrade-rc \
     -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten-wasm.cmake" \
-    -DEMSCRIPTEN_PREFIX=$(echo /usr/local/Cellar/emscripten/*/libexec) \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG -O1" \
     -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-O1" \
@@ -79,7 +77,6 @@ mkdir build-emscripten && cd build-emscripten
 cmake .. \
     -DCORRADE_RC_EXECUTABLE=$HOME/deps-native/bin/corrade-rc \
     -DCMAKE_TOOLCHAIN_FILE="../toolchains/generic/Emscripten-wasm.cmake" \
-    -DEMSCRIPTEN_PREFIX=$(echo /usr/local/Cellar/emscripten/*/libexec) \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG -O1" \
     -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-O1" \
@@ -95,6 +92,7 @@ cmake .. \
     -DWITH_DRWAVAUDIOIMPORTER=ON \
     -DWITH_FAAD2AUDIOIMPORTER=ON \
     -DWITH_FREETYPEFONT=OFF \
+    -DWITH_GLSLANGSHADERCONVERTER=OFF \
     -DWITH_HARFBUZZFONT=OFF \
     -DWITH_ICOIMPORTER=ON \
     -DWITH_JPEGIMAGECONVERTER=OFF \
@@ -105,6 +103,7 @@ cmake .. \
     -DWITH_PNGIMAGECONVERTER=OFF \
     -DWITH_PNGIMPORTER=OFF \
     -DWITH_PRIMITIVEIMPORTER=ON \
+    -DWITH_SPIRVTOOLSSHADERCONVERTER=OFF \
     -DWITH_STANFORDIMPORTER=ON \
     -DWITH_STANFORDSCENECONVERTER=ON \
     -DWITH_STBIMAGECONVERTER=ON \

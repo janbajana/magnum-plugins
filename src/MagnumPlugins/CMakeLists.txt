@@ -25,7 +25,8 @@
 
 # Wrapper for creating given plugin type
 macro(add_plugin plugin_name debug_install_dirs release_install_dirs metadata_file)
-    if(NOT BUILD_PLUGINS_STATIC)
+    string(TOUPPER ${plugin_name} PLUGIN_NAME)
+    if(NOT MAGNUM_${PLUGIN_NAME}_BUILD_STATIC)
         corrade_add_plugin(${plugin_name} "${debug_install_dirs}" "${release_install_dirs}" ${metadata_file} ${ARGN})
         set_target_properties(${plugin_name} ${plugin_name}-metadata PROPERTIES FOLDER "MagnumPlugins/${plugin_name}")
     else()
@@ -78,6 +79,10 @@ if(WITH_FREETYPEFONT)
     add_subdirectory(FreeTypeFont)
 endif()
 
+if(WITH_GLSLANGSHADERCONVERTER)
+    add_subdirectory(GlslangShaderConverter)
+endif()
+
 if(WITH_HARFBUZZFONT)
     add_subdirectory(HarfBuzzFont)
 endif()
@@ -116,6 +121,10 @@ endif()
 
 if(WITH_PRIMITIVEIMPORTER)
     add_subdirectory(PrimitiveImporter)
+endif()
+
+if(WITH_SPIRVTOOLSSHADERCONVERTER)
+    add_subdirectory(SpirvToolsShaderConverter)
 endif()
 
 if(WITH_STANFORDIMPORTER)

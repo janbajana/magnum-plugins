@@ -54,6 +54,9 @@ class FreeTypeLayouter: public AbstractLayouter {
 
 }
 
+#if defined(CORRADE_BUILD_MULTITHREADED) && !defined(CORRADE_TARGET_WINDOWS)
+CORRADE_THREAD_LOCAL
+#endif
 FT_Library FreeTypeFont::library = nullptr;
 
 void FreeTypeFont::initialize() {

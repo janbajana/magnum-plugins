@@ -33,11 +33,16 @@ if(Git_FOUND)
     execute_process(COMMAND ${GIT_EXECUTABLE} describe --match "v*" --long
         OUTPUT_VARIABLE MAGNUMPLUGINS_VERSION_STRING
         RESULT_VARIABLE _MAGNUMPLUGINS_VERSION_RESULT
+        # Otherwise this gets executed in the build dir, which might be inside
+        # a totally different Git working copy
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if(MAGNUMPLUGINS_VERSION_STRING MATCHES "^v([0-9][0-9][0-9][0-9])\\.0?([0-9][0-9])-([0-9]+)-g([a-f0-9]+)$")
+    if(MAGNUMPLUGINS_VERSION_STRING MATCHES "^v([0-9][0-9][0-9][0-9])\\.0?([0-9][0-9]?)-([0-9]+)-g([a-f0-9]+)$")
         set(MAGNUMPLUGINS_VERSION_YEAR ${CMAKE_MATCH_1})
         set(MAGNUMPLUGINS_VERSION_MONTH ${CMAKE_MATCH_2})
         set(MAGNUMPLUGINS_VERSION_COMMIT ${CMAKE_MATCH_3})
+        # Otherwise if commit is 0, it would #undef the variable
+        set(MAGNUMPLUGINS_VERSION_COMMIT " ${MAGNUMPLUGINS_VERSION_COMMIT}")
         set(MAGNUMPLUGINS_VERSION_HASH ${CMAKE_MATCH_4})
     elseif(_MAGNUMPLUGINS_VERSION_RESULT EQUAL 0)
         message(WARNING "Can't match Git version from ${MAGNUMPLUGINS_VERSION_STRING}")

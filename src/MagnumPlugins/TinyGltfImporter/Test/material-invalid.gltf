@@ -8,7 +8,7 @@
             "alphaMode": "WAT"
         },
         {
-            "name": "invalid texture index pbrMetallicRoughness",
+            "name": "invalid texture index pbrMetallicRoughness base color",
             "pbrMetallicRoughness": {
                 "baseColorTexture": {
                     "index": 2
@@ -16,9 +16,11 @@
             }
         },
         {
-            "name": "invalid texture index normalTexture",
-            "normalTexture": {
-                "index": 2
+            "name": "invalid texture index pbrMetallicRoughness metallic/roughness",
+            "pbrMetallicRoughness": {
+                "metallicRoughnessTexture": {
+                    "index": 2
+                }
             }
         },
         {
@@ -42,95 +44,49 @@
             }
         },
         {
-            "name": "invalid texture transform texCoord index",
-            "pbrMetallicRoughness": {
-                "baseColorTexture": {
-                    "index": 0,
-                    "extensions": {
-                        "KHR_texture_transform": {
-                            "texCoord": 1
-                        }
-                    }
-                }
-            }
-        },
-        {
-            "name": "missing first texture transform",
-            "extensions": {
-                "KHR_materials_pbrSpecularGlossiness": {
-                    "diffuseTexture": {
-                        "index": 0,
-                        "texCoord": 0
-                    },
-                    "specularGlossinessTexture": {
-                        "index": 1,
-                        "extensions": {
-                            "KHR_texture_transform": {
-                                "offset": [0.0, 1.0]
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        {
-            "name": "missing second texture transform",
-            "extensions": {
-                "KHR_materials_pbrSpecularGlossiness": {
-                    "diffuseTexture": {
-                        "index": 0,
-                        "extensions": {
-                            "KHR_texture_transform": {
-                                "offset": [0.0, 1.0]
-                            }
-                        }
-                    },
-                    "specularGlossinessTexture": {
-                        "index": 1
-                    }
-                }
-            }
-        },
-        {
-            "name": "inconsistent texture transform pbrMetallicRoughness + normal",
-            "pbrMetallicRoughness": {
-                "baseColorTexture": {
-                    "index": 0,
-                    "extensions": {
-                        "KHR_texture_transform": {
-                            "offset": [0.0, 1.0]
-                        }
-                    }
-                }
-            },
+            "name": "invalid texture index normal",
             "normalTexture": {
-                "index": 1,
-                "extensions": {
-                    "KHR_texture_transform": {
-                        "scale": [0.5, 0.5]
+                "index": 2
+            }
+        },
+        {
+            "name": "invalid texture index occlusion",
+            "occlusionTexture": {
+                "index": 2
+            }
+        },
+        {
+            "name": "invalid texture index emissive",
+            "emissiveTexture": {
+                "index": 2
+            }
+        },
+        {
+            "name": "invalid texture index clearcoat factor",
+            "extensions": {
+                "KHR_materials_clearcoat": {
+                    "clearcoatTexture": {
+                        "index": 2
                     }
                 }
             }
         },
         {
-            "name": "inconsistent texture transform pbrSpecularGlossiness",
+            "name": "invalid texture index clearcoat roughness",
             "extensions": {
-                "KHR_materials_pbrSpecularGlossiness": {
-                    "diffuseTexture": {
-                        "index": 0,
-                        "extensions": {
-                            "KHR_texture_transform": {
-                                "offset": [0.0, 1.0]
-                            }
-                        }
-                    },
-                    "specularGlossinessTexture": {
-                        "index": 1,
-                        "extensions": {
-                            "KHR_texture_transform": {
-                                "scale": [0.5, 0.5]
-                            }
-                        }
+                "KHR_materials_clearcoat": {
+                    "clearcoatRoughnessTexture": {
+                        "index": 2
+                    }
+                }
+            }
+        },
+        {
+            "name": "invalid texture index clearcoat normal",
+            "extensions": {
+                "KHR_materials_clearcoat": {
+                    "clearcoatNormalTexture": {
+                        "index": 2
                     }
                 }
             }

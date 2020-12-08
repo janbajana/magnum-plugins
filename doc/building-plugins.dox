@@ -27,6 +27,8 @@ namespace Magnum {
 /** @page building-plugins Downloading and building plugins
 @brief Guide how to download and build plugins for the Magnum engine.
 
+@m_keyword{Building plugins,,}
+
 @tableofcontents
 @m_footernavigation
 
@@ -139,7 +141,7 @@ fail or take too long, pass `--nocheck` to `makepkg` to skip that.
 Once built, install the package using `pacman`:
 
 @code{.sh}
-sudo pacman -U magnum-plugins-*.pkg.tar.xz
+sudo pacman -U magnum-plugins-*.pkg.tar.zst
 @endcode
 
 Edit the PKGBUILDs if you want to pass additional flags to CMake or
@@ -212,8 +214,53 @@ sudo dpkg -i ../magnum-plugins*.deb
 
 If you want to pass additional flags to CMake or
 @ref building-plugins-features "enable / disable additional features", add them
-to `dh_auto_configure` at the bottom of `debian/rules`. Watch out, as
+to `dh_auto_configure` at the bottom of `package/debian/rules`. Watch out, as
 indentation has to be done using tabs, not spaces.
+
+@m_class{m-block m-warning}
+
+@par Enabling Basis Universal and MeshOptimizer plugins
+@parblock
+Neither Basis Universal nor MeshOptimizer provide any packages for Debian and
+thus the Magnum Plugins package doesn't have it enabled by default. In order to
+enable them, do the following:
+
+-   For @ref Trade::BasisImporter "BasisImporter" or
+    @ref Trade::BasisImageConverter "BasisImageConverter", [download commit
+    `2f43afcc` of the Basis Universal repo](https://github.com/BinomialLLC/basis_universal/archive/2f43afcc97d0a5dafdb73b4e24e123cf9687a418.tar.gz),
+    extract it into `src/external/basis-universal` (note the dash instead of an
+    underscore) and set `WITH_BASISIMPORTER` / `WITH_BASISIMAGECONVERTER` to
+    `ON` in `package/debian/rules`
+-   For @ref Trade::MeshOptimizerSceneConverter "MeshOptimizerSceneConverter",
+    [clone the MeshOptimizer repo](https://github.com/zeux/meshoptimizer) to
+    `src/external/meshoptimizer` and set `WITH_MESHOPTIMIZERSCENECONVERTER` to
+    `ON` in `package/debian/rules`.
+
+With the above, when you run `dpkg-buildpackage`, CMake will automatically
+discover the sources and link them as static libraries to corresponding
+plugins.
+@endparblock
+
+@m_class{m-block m-success}
+
+@par Enabling Glslang and SPIRV-Tools plugins
+@parblock
+Glslang and SPIRV-Tools packages are available only since Ubuntu 20.04 and thus
+are not enabled in the Magnum Plugins package by default. In order to enable
+them, do the following:
+
+-   For @ref ShaderTools::GlslangConverter "GlslangShaderConverter", add
+    `glslang-dev` to the `Build-Depends:` line in `package/debian/control` and
+    set `WITH_GLSLANGSHADERCONVERTER` to `ON` in `package/debian/rules`.
+-   For @ref ShaderTools::SpirvToolsConverter "SpirvToolsShaderConverter",
+    add `spirv-tools` to the `Build-Depends:` line in `package/debian/control`
+    and set `WITH_SPIRVTOOLSSHADERCONVERTER` to `ON` in `package/debian/rules`.
+
+With the above, when you run `dpkg-buildpackage`, it should correctly find the
+dependencies (or ask for them to be installed) and build the corresponding
+plugins. The workflow is equivalent for vanilla Debian, as the packages are
+named the same.
+@endparblock
 
 There are also Debian packages for
 @ref building-integration-packages-deb "Magnum Integration",
@@ -283,22 +330,6 @@ cross-compiling and platform-specific issues.
 
 @subsection building-plugins-features Enabling or disabling features
 
-Similarly to Magnum, the plugins are build as shared by default. If you are
-developing for a platform that doesn't support dynamic library loading or if
-you just want to link them statically, enable `BUILD_PLUGINS_STATIC` to build
-the plugins as static. If you plan to use the static plugins with shared
-libraries later, enable also position-independent code with `BUILD_STATIC_PIC`.
-Dynamic plugins are loaded by the manager on request at runtime, potentially
-saving memory when the plugin is not needed, static plugins must be linked in
-at compile time. Some plugins expose their internal state through separate
-libraries, their static build can be controlled using the `BUILD_STATIC`
-option.
-
-Static plugins built in the `Debug` configuration (e.g. with `CMAKE_BUILD_TYPE`
-set to `Debug`) have a `-d` suffix, *dynamic* plugins in `Debug` configuration
-are installed to the `magnum-d` subdirectory, similarly to what is done when
-@ref building "building Magnum itself".
-
 By default no plugins are built and you need to select them manually:
 
 -   `WITH_ASSIMPIMPORTER` --- Build the @ref Trade::AssimpImporter "AssimpImporter"
@@ -327,6 +358,8 @@ By default no plugins are built and you need to select them manually:
     [FAAD2](https://www.audiocoding.com/faad2.html).
 -   `WITH_FREETYPEFONT` --- Build the @ref Text::FreeTypeFont "FreeTypeFont"
     plugin. Depends on [FreeType](http://www.freetype.org/).
+-   `WITH_GLSLANGSHADERCONVERTER` --- Build the @ref ShaderTools::GlslangConverter "GlslangShaderConverter"
+    plugin. Depends on [Glslang](https://github.com/KhronosGroup/glslang).
 -   `WITH_HARFBUZZFONT` --- Build the @ref Text::HarfBuzzFont "HarfBuzzFont"
     plugin. Enables also building of the @ref Text::FreeTypeFont "FreeTypeFont"
     plugin. Depends on [HarfBuzz](http://www.freedesktop.org/wiki/Software/HarfBuzz).
@@ -350,6 +383,8 @@ By default no plugins are built and you need to select them manually:
     plugin. Depends on [libPNG](http://www.libpng.org/pub/png/libpng.html).
 -   `WITH_PRIMITIVEIMPORTER` --- Build the @ref Trade::PrimitiveImporter
     "PrimitiveImporter" plugin.
+-   `WITH_SPIRVTOOLSSHADERCONVERTER` --- Build the @ref ShaderTools::SpirvToolsConverter "SpirvToolsShaderConverter"
+    plugin. Depends on [SPIRV-Tools](https://github.com/KhronosGroup/SPIRV-Tools).
 -   `WITH_STANFORDIMPORTER` --- Build the
     @ref Trade::StanfordImporter "StanfordImporter" plugin.
 -   `WITH_STANFORDSCENECONVERTER` --- Build the
@@ -372,10 +407,37 @@ control their build separately:
 -   `WITH_OPENDDL` --- Build the @ref OpenDdl library. Enabled automatically if
     `WITH_OPENGEXIMPORTER` is enabled.
 
+Options controlling the build are a subset of
+@ref building-features "the options used by Magnum":
+
+-   `BUILD_STATIC` --- Build all libraries as static. Default is shared, except
+    on platforms such as @ref CORRADE_TARGET_ANDROID "Android" or
+    @ref CORRADE_TARGET_EMSCRIPTEN "Emscripten" that don't support dynamic
+    linking.
+-   `BUILD_STATIC_PIC` --- Build static libraries with position-independent
+    code. Enabled by default when building static libraries, disable if you
+    don't need this feature. On @ref CORRADE_TARGET_EMSCRIPTEN "Emscripten"
+    this option is always off.
+-   `BUILD_PLUGINS_STATIC` --- Build plugins as static. By default, plugins are
+    built as dynamic. Independent of the `BUILD_STATIC` option to allow having
+    static libraries with dynamic plugins and vice versa. To some extent it's
+    also possible to have only a subset of plugins built as static --- keep
+    this option `OFF` and enable `MAGNUM_<PLUGIN>_BUILD_STATIC` for particular
+    plugins instead.
+-   Additional options are inherited from the
+    @ref CORRADE_BUILD_MULTITHREADED and
+    @ref MAGNUM_BUILD_STATIC_UNIQUE_GLOBALS options specified when building
+    Magnu,
+
 Note that each plugin class / library namespace documentation contains more
 detailed information about its dependencies, availability on particular
 platforms and also a guide how to enable given plugin for building and how to
 use it with CMake.
+
+Libraries and static plugins built in the `Debug` configuration (e.g. with
+`CMAKE_BUILD_TYPE` set to `Debug`) have a `-d` suffix, *dynamic* plugins in
+`Debug` configuration are installed to the `magnum-d` subdirectory, similarly
+to what is done when @ref building "building Magnum itself".
 
 @section building-plugins-doc Building documentation
 
@@ -385,18 +447,22 @@ in @ref building-doc.
 
 @section building-plugins-ci Continuous Integration
 
+@subsection building-plugins-ci-circleci CircleCI
+
+In `package/ci/` there is a `circle.yml` file with Linux GCC 4.8, macOS,
+Emscripten, AddressSanitizer and ThreadSanitizer configuration. Online
+at https://circleci.com/gh/mosra/magnum-plugins.
+
 @subsection building-plugins-ci-travis Travis
 
-In `package/ci/` there is a `travis.yml` file with Linux GCC 4.8, macOS, Linux
-desktop GLES2/GLES3, iOS GLES2/GLES3, Emscripten WebGL1/WebGL2, Android
-GLES2/GLES3, AddressSanitizer and ThreadSanitizer configuration. Online at
-https://travis-ci.org/mosra/magnum-plugins.
+In `package/ci/` there is a `travis.yml` file with iOS and Android
+configuration. Online at https://travis-ci.com/mosra/magnum-plugins.
 
 @subsection building-plugins-ci-appveyor AppVeyor
 
 In `package/ci/` there is an `appveyor.yml` file with Windows desktop MSVC,
-MinGW, Windows desktop GLES2/GLES3 and Windows RT GLES2/GLES3 configuration.
-Online at https://ci.appveyor.com/project/mosra/magnum-plugins.
+MinGW and Windows RT configuration. Online at
+https://ci.appveyor.com/project/mosra/magnum-plugins.
 
 @subsection building-plugins-ci-coverage Codecov.io
 

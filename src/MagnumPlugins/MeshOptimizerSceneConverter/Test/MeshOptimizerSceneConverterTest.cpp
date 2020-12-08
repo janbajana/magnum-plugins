@@ -32,6 +32,7 @@
 #include <Corrade/Utility/FormatStl.h>
 #include <Magnum/Math/Vector3.h>
 #include <Magnum/MeshTools/CompressIndices.h>
+#include <Magnum/MeshTools/Interleave.h>
 #include <Magnum/Primitives/Circle.h>
 #include <Magnum/Primitives/Icosphere.h>
 #include <Magnum/Primitives/Square.h>
@@ -58,6 +59,7 @@ struct MeshOptimizerSceneConverterTest: TestSuite::Tester {
 
     template<class T> void inPlaceOptimizeVertexCache();
     template<class T> void inPlaceOptimizeOverdraw();
+    void inPlaceOptimizeOverdrawPositionsNotFourByteAligned();
     template<class T> void inPlaceOptimizeVertexFetch();
     void inPlaceOptimizeVertexFetchNoAttributes();
 
@@ -109,6 +111,7 @@ MeshOptimizerSceneConverterTest::MeshOptimizerSceneConverterTest() {
         &MeshOptimizerSceneConverterTest::inPlaceOptimizeOverdraw<UnsignedByte>,
         &MeshOptimizerSceneConverterTest::inPlaceOptimizeOverdraw<UnsignedShort>,
         &MeshOptimizerSceneConverterTest::inPlaceOptimizeOverdraw<UnsignedInt>,
+        &MeshOptimizerSceneConverterTest::inPlaceOptimizeOverdrawPositionsNotFourByteAligned,
 
         &MeshOptimizerSceneConverterTest::inPlaceOptimizeVertexFetch<UnsignedByte>,
         &MeshOptimizerSceneConverterTest::inPlaceOptimizeVertexFetch<UnsignedShort>,
@@ -366,7 +369,8 @@ template<class T> void MeshOptimizerSceneConverterTest::inPlaceOptimizeOverdraw(
         12, 13, 14, 14, 13, 6, 6, 13, 25, 14, 6, 24, 22, 6, 25, 6
     }), TestSuite::Compare::Container);
 
-    /* Try again with a higher value */
+    /* Try again with a higher value. Disable vertex cache optimization to
+       avoid it being performed twice. */
     converter->configuration().setValue("optimizeVertexCache", false);
     converter->configuration().setValue("optimizeOverdrawThreshold", 2.5f);
     CORRADE_VERIFY(converter->convertInPlace(icosphere));
@@ -387,6 +391,27 @@ template<class T> void MeshOptimizerSceneConverterTest::inPlaceOptimizeOverdraw(
     CORRADE_COMPARE_AS(icosphere.attribute<Vector3>(MeshAttribute::Normal).prefix(4),
         Containers::arrayView(positionsOrNormals),
         TestSuite::Compare::Container);
+}
+
+void MeshOptimizerSceneConverterTest::inPlaceOptimizeOverdrawPositionsNotFourByteAligned() {
+    Containers::Pointer<AbstractSceneConverter> converter = _manager.instantiate("MeshOptimizerSceneConverter");
+    converter->configuration().setValue("optimizeVertexCache", true);
+    converter->configuration().setValue("optimizeOverdraw", true);
+    converter->configuration().setValue("optimizeVertexFetch", false);
+    /* Same as in inPlaceOptimizeOverdraw() */
+    converter->configuration().setValue("optimizeOverdrawThreshold", 2.5f);
+
+    MeshData icosphere = MeshTools::interleave(
+        Primitives::icosphereSolid(1),
+        {MeshAttributeData{1}});
+    /* Should be not divisible by 4 (which meshoptimizer expects) */
+    CORRADE_COMPARE(icosphere.attributeStride(MeshAttribute::Position), 25);
+
+    CORRADE_VERIFY(converter->convertInPlace(icosphere));
+    CORRADE_COMPARE_AS(icosphere.indices<UnsignedInt>().prefix(16), Containers::arrayView<UnsignedInt>({
+        /* Same as in inPlaceOptimizeOverdraw() */
+        3, 17, 19, 3, 19, 31, 3, 30, 20, 31, 30, 3, 12, 13, 14, 14
+    }), TestSuite::Compare::Container);
 }
 
 template<class T> void MeshOptimizerSceneConverterTest::inPlaceOptimizeVertexFetch() {
@@ -521,7 +546,7 @@ void MeshOptimizerSceneConverterTest::verboseCustomAttribute() {
            fetch bytes are calculated correctly even for custom / matrix /
            array attribs */
         Trade::MeshAttributeData{meshAttributeCustom(1),
-            VertexFormat::Matrix3x2bNormalized, 2, icosphere.attribute(1)}
+            VertexFormat::Matrix3x2bNormalized, icosphere.attribute(1), 2}
     });
     MeshData icosphereCustom{icosphere.primitive(),
         icosphere.releaseIndexData(), indices,
@@ -650,19 +675,22 @@ template<class T> void MeshOptimizerSceneConverterTest::inPlaceOptimizeEmpty() {
 void MeshOptimizerSceneConverterTest::copy() {
     Containers::Pointer<AbstractSceneConverter> converter = _manager.instantiate("MeshOptimizerSceneConverter");
 
-    MeshData original = Primitives::icosphereSolid(1);
+    /* Convert to a 16-bit indices to verify the type is preserved */
+    MeshData original = MeshTools::compressIndices(Primitives::icosphereSolid(1));
+    CORRADE_COMPARE(original.indexType(), MeshIndexType::UnsignedShort);
     Containers::Optional<MeshData> optimized = converter->convert(original);
 
     CORRADE_VERIFY(optimized);
     CORRADE_COMPARE(optimized->primitive(), original.primitive());
     CORRADE_COMPARE(optimized->indexCount(), original.indexCount());
+    CORRADE_COMPARE(optimized->indexType(), MeshIndexType::UnsignedShort);
     CORRADE_COMPARE(optimized->vertexCount(), original.vertexCount());
     CORRADE_COMPARE(optimized->attributeCount(), original.attributeCount());
     CORRADE_COMPARE(optimized->indexDataFlags(), DataFlag::Owned|DataFlag::Mutable);
     CORRADE_COMPARE(optimized->vertexDataFlags(), DataFlag::Owned|DataFlag::Mutable);
 
-    CORRADE_COMPARE_AS(optimized->indices<UnsignedInt>().prefix(16),
-        Containers::arrayView<UnsignedInt>({
+    CORRADE_COMPARE_AS(optimized->indices<UnsignedShort>().prefix(16),
+        Containers::arrayView<UnsignedShort>({
             /* Same as in inPlaceOptimizeVertexFetch() */
             0, 1, 2, 2, 1, 3, 3, 1, 4, 2, 3, 5, 6, 3, 4, 3
         }), TestSuite::Compare::Container);

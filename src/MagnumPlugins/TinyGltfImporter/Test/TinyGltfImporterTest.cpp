@@ -44,7 +44,6 @@
 #include <Magnum/Math/CubicHermite.h>
 #include <Magnum/MeshTools/Transform.h>
 #include <Magnum/Trade/AbstractImporter.h>
-#include <Magnum/Trade/AbstractMaterialData.h>
 #include <Magnum/Trade/AnimationData.h>
 #include <Magnum/Trade/CameraData.h>
 #include <Magnum/Trade/ImageData.h>
@@ -52,8 +51,13 @@
 #include <Magnum/Trade/MeshData.h>
 #include <Magnum/Trade/MeshObjectData3D.h>
 #include <Magnum/Trade/ObjectData3D.h>
+#include <Magnum/Trade/FlatMaterialData.h>
+#include <Magnum/Trade/PbrClearCoatMaterialData.h>
+#include <Magnum/Trade/PbrMetallicRoughnessMaterialData.h>
+#include <Magnum/Trade/PbrSpecularGlossinessMaterialData.h>
 #include <Magnum/Trade/PhongMaterialData.h>
 #include <Magnum/Trade/SceneData.h>
+#include <Magnum/Trade/SkinData.h>
 #include <Magnum/Trade/TextureData.h>
 #include <Magnum/Sampler.h>
 
@@ -87,14 +91,25 @@ struct TinyGltfImporterTest: TestSuite::Tester {
     void camera();
 
     void light();
+    void lightInvalid();
+    void lightMissingType();
+    void lightMissingSpot();
 
     void scene();
     void sceneEmpty();
     void sceneNoDefault();
-    void objectTransformation();
+    void sceneInvalidObject();
+    void sceneInvalidMesh();
+    void sceneInvalidScene();
+    void sceneInvalidDefaultScene();
 
+    void objectTransformation();
     void objectTransformationQuaternionNormalizationEnabled();
     void objectTransformationQuaternionNormalizationDisabled();
+
+    void skin();
+    void skinInvalid();
+    void skinNoJointsProperty();
 
     void mesh();
     void meshAttributeless();
@@ -113,11 +128,13 @@ struct TinyGltfImporterTest: TestSuite::Tester {
 
     void materialPbrMetallicRoughness();
     void materialPbrSpecularGlossiness();
-    void materialProperties();
+    void materialCommon();
+    void materialUnlit();
+    void materialClearCoat();
+    void materialPhongFallback();
+
     void materialInvalid();
     void materialTexCoordFlip();
-    void materialTextureCoordinateSetsDefault();
-    void materialTextureCoordinateSets();
 
     void texture();
     void textureDefaultSampler();
@@ -188,6 +205,32 @@ constexpr struct {
     {"node index out of bounds", "target node 2 out of bounds for 2 nodes"},
     {"sampler input accessor index out of bounds", "accessor 3 out of bounds for 3 accessors"},
     {"sampler output accessor index out of bounds", "accessor 3 out of bounds for 3 accessors"}
+};
+
+constexpr struct {
+    const char* name;
+    const char* message;
+} LightInvalidData[]{
+    {"unknown type", "invalid light type what"},
+    {"directional with range", "range can't be defined for a directional light"},
+    {"spot with too small inner angle", "inner and outer cone angle Deg(-0.572958) and Deg(45) out of allowed bounds"},
+    /* These are kinda silly (not sure why we should limit to 90° and why inner
+       can't be the same as outer), but let's follow the spec */
+    {"spot with too large outer angle", "inner and outer cone angle Deg(0) and Deg(90.5273) out of allowed bounds"},
+    {"spot with inner angle same as outer", "inner and outer cone angle Deg(14.3239) and Deg(14.3239) out of allowed bounds"},
+    {"four color values", "expected three values for a color, got 4"}
+};
+
+constexpr struct {
+    const char* name;
+    const char* message;
+} SkinInvalidData[]{
+    {"no joints", "skin has no joints"},
+    {"joint out of bounds", "target node 2 out of bounds for 2 nodes"},
+    {"accessor out of bounds", "accessor 4 out of bounds for 4 accessors"},
+    {"wrong accessor type", "inverse bind matrices have unexpected type 35/5126"},
+    {"wrong accessor component type", "inverse bind matrices have unexpected type 36/5123"},
+    {"wrong accessor count", "invalid inverse bind matrix count, expected 2 but got 3"}
 };
 
 constexpr struct {
@@ -287,39 +330,32 @@ constexpr struct {
     const char* message;
 } MaterialInvalidData[]{
     {"unknown alpha mode", "unknown alpha mode WAT"},
-    {"invalid texture index normalTexture", "normalTexture index 2 out of bounds for 2 textures"},
-    {"invalid texture index pbrMetallicRoughness", "baseColorTexture index 2 out of bounds for 2 textures"},
+    {"invalid texture index pbrMetallicRoughness base color", "baseColorTexture index 2 out of bounds for 2 textures"},
+    {"invalid texture index pbrMetallicRoughness metallic/roughness", "metallicRoughnessTexture index 2 out of bounds for 2 textures"},
     {"invalid texture index pbrSpecularGlossiness diffuse", "diffuseTexture index 2 out of bounds for 2 textures"},
     {"invalid texture index pbrSpecularGlossiness specular", "specularGlossinessTexture index 2 out of bounds for 2 textures"},
-    {"invalid texture transform texCoord index", "transform of multiple texture coordinate sets is not supported"},
-    {"missing first texture transform", R"(specularGlossinessTexture has an inconsistent texture transform, expected
-Matrix(1, 0, 0,
-       0, 1, 0,
-       0, 0, 1) but got
-Matrix(1, 0, 0,
-       0, 1, -1,
-       0, 0, 1))"},
-    {"missing second texture transform", R"(specularGlossinessTexture has an inconsistent texture transform, expected
-Matrix(1, 0, 0,
-       0, 1, -1,
-       0, 0, 1) but got
-Matrix(1, 0, 0,
-       0, 1, 0,
-       0, 0, 1))"},
-    {"inconsistent texture transform pbrMetallicRoughness + normal", R"(normalTexture has an inconsistent texture transform, expected
-Matrix(1, 0, 0,
-       0, 1, -1,
-       0, 0, 1) but got
-Matrix(0.5, 0, 0,
-       0, 0.5, 0.5,
-       0, 0, 1))"},
-    {"inconsistent texture transform pbrSpecularGlossiness", R"(specularGlossinessTexture has an inconsistent texture transform, expected
-Matrix(1, 0, 0,
-       0, 1, -1,
-       0, 0, 1) but got
-Matrix(0.5, 0, 0,
-       0, 0.5, 0.5,
-       0, 0, 1))"}
+    {"invalid texture index normal", "normalTexture index 2 out of bounds for 2 textures"},
+    {"invalid texture index occlusion", "occlusionTexture index 2 out of bounds for 2 textures"},
+    {"invalid texture index emissive", "emissiveTexture index 2 out of bounds for 2 textures"},
+    {"invalid texture index clearcoat factor", "clearcoatTexture index 2 out of bounds for 2 textures"},
+    {"invalid texture index clearcoat roughness", "clearcoatRoughnessTexture index 2 out of bounds for 2 textures"},
+    {"invalid texture index clearcoat normal", "clearcoatNormalTexture index 2 out of bounds for 2 textures"},
+};
+
+constexpr struct {
+    const char* name;
+    Int idOffset;
+    const char* message;
+} SceneInvalidObjectData[]{
+    {"camera out of bounds", 0, "camera index 1 out of bounds for 1 cameras"},
+    {"child out of bounds", 0, "child index 7 out of bounds for 7 nodes"},
+    {"material out of bounds", 0, "material index 4 out of bounds for 4 materials"},
+    {"material in a multi-primitive mesh out of bounds", 1, "material index 5 out of bounds for 4 materials"},
+    {"skin out of bounds", 0, "skin index 3 out of bounds for 3 skins"},
+    /* The skin should be checked for both duplicates of the primitive */
+    {"skin for a multi-primitive mesh out of bounds", 0, "skin index 3 out of bounds for 3 skins"},
+    {"skin for a multi-primitive mesh out of bounds", 1, "skin index 3 out of bounds for 3 skins"},
+    {"light out of bounds", 0, "light index 2 out of bounds for 2 lights"}
 };
 
 constexpr struct {
@@ -327,66 +363,40 @@ constexpr struct {
     const char* fileName;
     const char* meshName;
     bool flipInMaterial;
-    PhongMaterialData::Flags materialFlags;
+    bool hasTextureTransformation;
 } MaterialTexCoordFlipData[]{
-    {"multiple textures w/o transform",
-        "material-texcoord-flip.gltf", "float", false,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::SpecularTexture},
-    {"multiple textures w/o transform",
-        "material-texcoord-flip.gltf", "float", true,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::SpecularTexture},
-    {"multiple textures w/ identity transform",
-        "material-texcoord-flip.gltf", "float", false,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::SpecularTexture|
-        PhongMaterialData::Flag::TextureTransformation},
-    {"multiple textures w/ identity transform",
-        "material-texcoord-flip.gltf", "float", true,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::SpecularTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+    {"no transform",
+        "material-texcoord-flip.gltf", "float", false, false},
+    {"no transform",
+        "material-texcoord-flip.gltf", "float", true, false},
+    {"identity transform",
+        "material-texcoord-flip.gltf", "float", false, true},
+    {"identity transform",
+        "material-texcoord-flip.gltf", "float", true, true},
     {"transform from normalized unsigned byte",
         "material-texcoord-flip.gltf",
-        "normalized unsigned byte", false,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+        "normalized unsigned byte", false, true},
     {"transform from normalized unsigned byte",
         "material-texcoord-flip.gltf",
-        "normalized unsigned byte", true,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+        "normalized unsigned byte", true, true},
     {"transform from normalized unsigned short",
         "material-texcoord-flip.gltf",
-        "normalized unsigned short", false,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+        "normalized unsigned short", false, true},
     {"transform from normalized unsigned short",
         "material-texcoord-flip.gltf",
-        "normalized unsigned short", true,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+        "normalized unsigned short", true, true},
     {"transform from normalized signed integer",
         "material-texcoord-flip-unnormalized.gltf",
-        "normalized signed integer", false,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+        "normalized signed integer", false, true},
     {"transform from normalized signed integer",
         "material-texcoord-flip-unnormalized.gltf",
-        "normalized signed integer", true,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+        "normalized signed integer", true, true},
     {"transform from signed integer",
         "material-texcoord-flip-unnormalized.gltf",
-        "signed integer", false,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+        "signed integer", false, true},
     {"transform from signed integer",
         "material-texcoord-flip-unnormalized.gltf",
-        "signed integer", true,
-        PhongMaterialData::Flag::DiffuseTexture|
-        PhongMaterialData::Flag::TextureTransformation},
+        "signed integer", true, true},
 };
 
 constexpr struct {
@@ -454,16 +464,41 @@ TinyGltfImporterTest::TinyGltfImporterTest() {
 
     addInstancedTests({&TinyGltfImporterTest::camera,
 
-                       &TinyGltfImporterTest::light,
+                       &TinyGltfImporterTest::light},
+                      Containers::arraySize(SingleFileData));
 
-                       &TinyGltfImporterTest::scene,
+    addInstancedTests({&TinyGltfImporterTest::lightInvalid},
+        Containers::arraySize(LightInvalidData));
+
+    addTests({&TinyGltfImporterTest::lightMissingType,
+              &TinyGltfImporterTest::lightMissingSpot});
+
+    addInstancedTests({&TinyGltfImporterTest::scene,
                        &TinyGltfImporterTest::sceneEmpty,
-                       &TinyGltfImporterTest::sceneNoDefault,
-                       &TinyGltfImporterTest::objectTransformation},
+                       &TinyGltfImporterTest::sceneNoDefault},
+                      Containers::arraySize(SingleFileData));
+
+    addTests({&TinyGltfImporterTest::sceneInvalidMesh});
+
+    addInstancedTests({&TinyGltfImporterTest::sceneInvalidObject},
+        Containers::arraySize(SceneInvalidObjectData));
+
+    addTests({&TinyGltfImporterTest::sceneInvalidScene,
+              &TinyGltfImporterTest::sceneInvalidDefaultScene});
+
+    addInstancedTests({&TinyGltfImporterTest::objectTransformation},
                       Containers::arraySize(SingleFileData));
 
     addTests({&TinyGltfImporterTest::objectTransformationQuaternionNormalizationEnabled,
               &TinyGltfImporterTest::objectTransformationQuaternionNormalizationDisabled});
+
+    addInstancedTests({&TinyGltfImporterTest::skin},
+        Containers::arraySize(MultiFileData));
+
+    addInstancedTests({&TinyGltfImporterTest::skinInvalid},
+        Containers::arraySize(SkinInvalidData));
+
+    addTests({&TinyGltfImporterTest::skinNoJointsProperty});
 
     addInstancedTests({&TinyGltfImporterTest::mesh},
                       Containers::arraySize(MultiFileData));
@@ -486,9 +521,10 @@ TinyGltfImporterTest::TinyGltfImporterTest() {
 
     addTests({&TinyGltfImporterTest::materialPbrMetallicRoughness,
               &TinyGltfImporterTest::materialPbrSpecularGlossiness,
-              &TinyGltfImporterTest::materialProperties,
-              &TinyGltfImporterTest::materialTextureCoordinateSetsDefault,
-              &TinyGltfImporterTest::materialTextureCoordinateSets});
+              &TinyGltfImporterTest::materialCommon,
+              &TinyGltfImporterTest::materialUnlit,
+              &TinyGltfImporterTest::materialClearCoat,
+              &TinyGltfImporterTest::materialPhongFallback});
 
     addInstancedTests({&TinyGltfImporterTest::materialInvalid},
         Containers::arraySize(MaterialInvalidData));
@@ -1241,36 +1277,83 @@ void TinyGltfImporterTest::light() {
     CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
         "light" + std::string{data.suffix})));
 
-    CORRADE_COMPARE(importer->lightCount(), 4); /* 3 + 1 (ambient light) */
+    CORRADE_COMPARE(importer->lightCount(), 4);
+
+    CORRADE_COMPARE(importer->lightForName("Spot"), 1);
+    CORRADE_COMPARE(importer->lightName(1), "Spot");
 
     {
-        CORRADE_COMPARE(importer->lightForName("Point"), 0);
-        CORRADE_COMPARE(importer->lightName(0), "Point");
-
-        auto light = importer->light(0);
+        auto light = importer->light("Point with everything implicit");
         CORRADE_VERIFY(light);
         CORRADE_COMPARE(light->type(), LightData::Type::Point);
-        CORRADE_COMPARE(light->color(), (Color3{0.06f, 0.88f, 1.0f}));
+        CORRADE_COMPARE(light->color(), (Color3{1.0f, 1.0f, 1.0f}));
         CORRADE_COMPARE(light->intensity(), 1.0f);
+        CORRADE_COMPARE(light->attenuation(), (Vector3{1.0f, 0.0f, 1.0f}));
+        CORRADE_COMPARE(light->range(), Constants::inf());
     } {
-        CORRADE_COMPARE(importer->lightForName("Spot"), 1);
-        CORRADE_COMPARE(importer->lightName(1), "Spot");
-
-        auto light = importer->light(1);
+        auto light = importer->light("Spot");
         CORRADE_VERIFY(light);
         CORRADE_COMPARE(light->type(), LightData::Type::Spot);
         CORRADE_COMPARE(light->color(), (Color3{0.28f, 0.19f, 1.0f}));
         CORRADE_COMPARE(light->intensity(), 2.1f);
+        CORRADE_COMPARE(light->attenuation(), (Vector3{1.0f, 0.0f, 1.0f}));
+        CORRADE_COMPARE(light->range(), 10.0f);
+        /* glTF has half-angles, we have full angles */
+        CORRADE_COMPARE(light->innerConeAngle(), 0.25_radf*2.0f);
+        CORRADE_COMPARE(light->outerConeAngle(), 0.35_radf*2.0f);
     } {
-        CORRADE_COMPARE(importer->lightForName("Sun"), 2);
-        CORRADE_COMPARE(importer->lightName(2), "Sun");
-
-        auto light = importer->light(2);
+        auto light = importer->light("Spot with implicit angles");
         CORRADE_VERIFY(light);
-        CORRADE_COMPARE(light->type(), LightData::Type::Infinite);
+        CORRADE_COMPARE(light->type(), LightData::Type::Spot);
+        CORRADE_COMPARE(light->innerConeAngle(), 0.0_degf);
+        /* glTF has half-angles, we have full angles */
+        CORRADE_COMPARE(light->outerConeAngle(), 45.0_degf*2.0f);
+    } {
+        auto light = importer->light("Sun");
+        CORRADE_VERIFY(light);
+        CORRADE_COMPARE(light->type(), LightData::Type::Directional);
         CORRADE_COMPARE(light->color(), (Color3{1.0f, 0.08f, 0.14f}));
-        CORRADE_COMPARE(light->intensity(), 1.0f);
+        CORRADE_COMPARE(light->intensity(), 0.1f);
     }
+}
+
+void TinyGltfImporterTest::lightInvalid() {
+    auto&& data = LightInvalidData[testCaseInstanceId()];
+    setTestCaseDescription(data.name);
+
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "light-invalid.gltf")));
+
+    /* Check we didn't forget to test anything */
+    CORRADE_COMPARE(importer->lightCount(), Containers::arraySize(LightInvalidData));
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->light(data.name));
+    CORRADE_COMPARE(out.str(), Utility::formatString("Trade::TinyGltfImporter::light(): {}\n", data.message));
+}
+
+void TinyGltfImporterTest::lightMissingType() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "light-missing-type.gltf")));
+    /* This error is extremely shitty, but well that's tinygltf, so. */
+    CORRADE_COMPARE(out.str(), "Trade::TinyGltfImporter::openData(): error opening file: 'type' property is missing.\n");
+}
+
+void TinyGltfImporterTest::lightMissingSpot() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "light-missing-spot.gltf")));
+    /* This error is extremely shitty, but well that's tinygltf, so. */
+    CORRADE_COMPARE(out.str(), "Trade::TinyGltfImporter::openData(): error opening file: Spot light description not found.\n");
 }
 
 void TinyGltfImporterTest::scene() {
@@ -1287,45 +1370,72 @@ void TinyGltfImporterTest::scene() {
     CORRADE_COMPARE(importer->sceneName(1), "Scene");
     CORRADE_COMPARE(importer->sceneForName("Scene"), 1);
 
+    auto emptyScene = importer->scene(0);
+    CORRADE_VERIFY(emptyScene);
+    CORRADE_VERIFY(emptyScene->importerState());
+    CORRADE_COMPARE(emptyScene->children3D(), std::vector<UnsignedInt>{});
+
     auto scene = importer->scene(1);
     CORRADE_VERIFY(scene);
     CORRADE_VERIFY(scene->importerState());
     CORRADE_COMPARE(scene->children3D(), (std::vector<UnsignedInt>{2, 4}));
 
-    CORRADE_COMPARE(importer->object3DCount(), 5);
+    CORRADE_COMPARE(importer->object3DCount(), 7);
+
+    CORRADE_COMPARE(importer->object3DName(4), "Light");
+    CORRADE_COMPARE(importer->object3DForName("Light"), 4);
 
     {
-        CORRADE_COMPARE(importer->object3DName(0), "Camera");
-        CORRADE_COMPARE(importer->object3DForName("Camera"), 0);
-        auto object = importer->object3D(0);
+        auto object = importer->object3D("Camera");
+        CORRADE_VERIFY(object);
         CORRADE_VERIFY(object->importerState());
         CORRADE_COMPARE(object->instanceType(), ObjectInstanceType3D::Camera);
+        CORRADE_COMPARE(object->instance(), 2);
         CORRADE_VERIFY(object->children().empty());
     } {
-        CORRADE_COMPARE(importer->object3DName(1), "Empty");
-        CORRADE_COMPARE(importer->object3DForName("Empty"), 1);
-        auto object = importer->object3D(1);
+        auto object = importer->object3D("Empty with one child");
+        CORRADE_VERIFY(object);
         CORRADE_VERIFY(object->importerState());
         CORRADE_COMPARE(object->instanceType(), ObjectInstanceType3D::Empty);
+        CORRADE_COMPARE(object->instance(), -1);
         CORRADE_COMPARE(object->children(), (std::vector<UnsignedInt>{0}));
     } {
-        CORRADE_COMPARE(importer->object3DName(2), "Mesh");
-        CORRADE_COMPARE(importer->object3DForName("Mesh"), 2);
-        auto object = importer->object3D(2);
+        auto object = importer->object3D("Mesh w/o material");
+        CORRADE_VERIFY(object);
         CORRADE_VERIFY(object->importerState());
         CORRADE_COMPARE(object->instanceType(), ObjectInstanceType3D::Mesh);
+        CORRADE_COMPARE(object->instance(), 1);
+        CORRADE_COMPARE(static_cast<MeshObjectData3D&>(*object).material(), -1);
+        CORRADE_COMPARE(static_cast<MeshObjectData3D&>(*object).skin(), -1);
         CORRADE_VERIFY(object->children().empty());
     } {
-        CORRADE_COMPARE(importer->object3DName(3), "Light");
-        CORRADE_COMPARE(importer->object3DForName("Light"), 3);
-        auto object = importer->object3D(3);
+        auto object = importer->object3D("Mesh and a material");
+        CORRADE_VERIFY(object);
+        CORRADE_VERIFY(object->importerState());
+        CORRADE_COMPARE(object->instanceType(), ObjectInstanceType3D::Mesh);
+        CORRADE_COMPARE(object->instance(), 0);
+        CORRADE_COMPARE(static_cast<MeshObjectData3D&>(*object).material(), 1);
+        CORRADE_COMPARE(static_cast<MeshObjectData3D&>(*object).skin(), -1);
+        CORRADE_VERIFY(object->children().empty());
+    } {
+        auto object = importer->object3D("Mesh and a skin");
+        CORRADE_VERIFY(object);
+        CORRADE_VERIFY(object->importerState());
+        CORRADE_COMPARE(object->instanceType(), ObjectInstanceType3D::Mesh);
+        CORRADE_COMPARE(object->instance(), 1);
+        CORRADE_COMPARE(static_cast<MeshObjectData3D&>(*object).material(), -1);
+        CORRADE_COMPARE(static_cast<MeshObjectData3D&>(*object).skin(), 1);
+        CORRADE_VERIFY(object->children().empty());
+    } {
+        auto object = importer->object3D("Light");
+        CORRADE_VERIFY(object);
         CORRADE_VERIFY(object->importerState());
         CORRADE_COMPARE(object->instanceType(), ObjectInstanceType3D::Light);
+        CORRADE_COMPARE(object->instance(), 1);
         CORRADE_VERIFY(object->children().empty());
     } {
-        CORRADE_COMPARE(importer->object3DName(4), "Empty 2");
-        CORRADE_COMPARE(importer->object3DForName("Empty 2"), 4);
-        auto object = importer->object3D(4);
+        auto object = importer->object3D("Empty with two children");
+        CORRADE_VERIFY(object);
         CORRADE_VERIFY(object->importerState());
         CORRADE_COMPARE(object->instanceType(), ObjectInstanceType3D::Empty);
         CORRADE_COMPARE(object->children(), (std::vector<UnsignedInt>{3, 1}));
@@ -1360,6 +1470,63 @@ void TinyGltfImporterTest::sceneNoDefault() {
     auto scene = importer->scene(0);
     CORRADE_VERIFY(scene);
     CORRADE_VERIFY(scene->children3D().empty());
+}
+
+void TinyGltfImporterTest::sceneInvalidObject() {
+    auto&& data = SceneInvalidObjectData[testCaseInstanceId()];
+    setTestCaseDescription(data.name);
+
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "scene-invalid.gltf")));
+
+    /* Check we didn't forget to test anything. There are some extra nodes for
+       multi-primitive meshes, ignore those. */
+    CORRADE_COMPARE(importer->object3DCount() - 1, Containers::arraySize(SceneInvalidObjectData));
+
+    /* For testing bounds checks for multi-primitive meshes we need to import
+       Nth mesh of the same name */
+    Int id = importer->object3DForName(data.name);
+    CORRADE_VERIFY(id != -1);
+    CORRADE_COMPARE(importer->object3DName(id + data.idOffset), data.name);
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->object3D(id + data.idOffset));
+    CORRADE_COMPARE(out.str(), Utility::formatString("Trade::TinyGltfImporter::object3D(): {}\n", data.message));
+}
+
+void TinyGltfImporterTest::sceneInvalidMesh() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "scene-invalid-mesh.gltf")));
+    CORRADE_COMPARE(out.str(), "Trade::TinyGltfImporter::openData(): mesh index 1 out of bounds for 1 meshes\n");
+}
+
+void TinyGltfImporterTest::sceneInvalidScene() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "scene-invalid.gltf")));
+
+    CORRADE_COMPARE(importer->sceneCount(), 1);
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->scene("node out of bounds"));
+    CORRADE_COMPARE(out.str(), "Trade::TinyGltfImporter::scene(): node index 7 out of bounds for 7 nodes\n");
+}
+
+void TinyGltfImporterTest::sceneInvalidDefaultScene() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "scene-invalid-default.gltf")));
+    CORRADE_COMPARE(out.str(), "Trade::TinyGltfImporter::openData(): scene index 0 out of bounds for 0 scenes\n");
 }
 
 void TinyGltfImporterTest::objectTransformation() {
@@ -1522,6 +1689,82 @@ void TinyGltfImporterTest::objectTransformationQuaternionNormalizationDisabled()
     CORRADE_VERIFY(object);
     CORRADE_COMPARE(object->flags(), ObjectFlag3D::HasTranslationRotationScaling);
     CORRADE_COMPARE(object->rotation(), Quaternion::rotation(45.0_degf, Vector3::yAxis())*2.0f);
+}
+
+void TinyGltfImporterTest::skin() {
+    auto&& data = MultiFileData[testCaseInstanceId()];
+    setTestCaseDescription(data.name);
+
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "skin" + std::string{data.suffix})));
+
+    CORRADE_COMPARE(importer->skin3DCount(), 2);
+    CORRADE_COMPARE(importer->skin3DName(1), "explicit inverse bind matrices");
+    CORRADE_COMPARE(importer->skin3DForName("explicit inverse bind matrices"), 1);
+    CORRADE_COMPARE(importer->skin3DForName("nonexistent"), -1);
+
+    {
+        CORRADE_COMPARE(importer->skin3DName(0), "implicit inverse bind matrices");
+
+        auto skin = importer->skin3D(0);
+        CORRADE_VERIFY(skin);
+        CORRADE_VERIFY(skin->importerState());
+        CORRADE_COMPARE_AS(skin->joints(),
+            Containers::arrayView<UnsignedInt>({1, 2}),
+            TestSuite::Compare::Container);
+        CORRADE_COMPARE_AS(skin->inverseBindMatrices(),
+            Containers::arrayView({Matrix4{}, Matrix4{}}),
+            TestSuite::Compare::Container);
+
+    } {
+        CORRADE_COMPARE(importer->skin3DName(1), "explicit inverse bind matrices");
+
+        auto skin = importer->skin3D(1);
+        CORRADE_VERIFY(skin);
+        CORRADE_VERIFY(skin->importerState());
+        CORRADE_COMPARE_AS(skin->joints(),
+            Containers::arrayView<UnsignedInt>({0, 2, 1}),
+            TestSuite::Compare::Container);
+        CORRADE_COMPARE_AS(skin->inverseBindMatrices(),
+            Containers::arrayView({
+                Matrix4::rotationX(35.0_degf),
+                Matrix4::translation({2.0f, 3.0f, 4.0f}),
+                Matrix4::scaling({2.0f, 3.0f, 4.0f})
+            }), TestSuite::Compare::Container);
+    }
+}
+
+void TinyGltfImporterTest::skinInvalid() {
+    auto&& data = SkinInvalidData[testCaseInstanceId()];
+    setTestCaseDescription(data.name);
+
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "skin-invalid.gltf")));
+
+    /* Check we didn't forget to test anything */
+    CORRADE_COMPARE(importer->skin3DCount(), Containers::arraySize(SkinInvalidData));
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->skin3D(data.name));
+    CORRADE_COMPARE(out.str(), Utility::formatString("Trade::TinyGltfImporter::skin3D(): {}\n", data.message));
+}
+
+void TinyGltfImporterTest::skinNoJointsProperty() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    std::ostringstream out;
+    Error redirectError{&out};
+    CORRADE_VERIFY(!importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "skin-no-joints.gltf")));
+    {
+        CORRADE_EXPECT_FAIL("TinyGLTF doesn't give any usable error message when there's no skin.joints property, sigh.");
+        CORRADE_VERIFY(false);
+    }
+
+    CORRADE_COMPARE(out.str(), "Trade::TinyGltfImporter::openData(): error opening file: \n");
 }
 
 void TinyGltfImporterTest::mesh() {
@@ -2211,254 +2454,667 @@ void TinyGltfImporterTest::meshInvalid() {
 
 void TinyGltfImporterTest::materialPbrMetallicRoughness() {
     Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    /* Disable Phong material fallback (enabled by default for compatibility),
+       testing that separately in materialPhongFallback() */
+    importer->configuration().setValue("phongMaterialFallback", false);
+
     CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
         "material-metallicroughness.gltf")));
-
     CORRADE_COMPARE(importer->materialCount(), 7);
-    CORRADE_COMPARE(importer->materialForName("texture"), 1);
-    CORRADE_COMPARE(importer->materialName(1), "texture");
+    CORRADE_COMPARE(importer->materialForName("textures"), 2);
+    CORRADE_COMPARE(importer->materialName(2), "textures");
 
     {
-        auto material = importer->material("color");
-        CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
-
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flags{});
-        CORRADE_COMPARE(phong.ambientColor(), 0x000000ff_rgbaf);
-        CORRADE_COMPARE(phong.diffuseColor(), (Color4{0.3f, 0.4f, 0.5f, 0.8f}));
-        CORRADE_COMPARE(phong.specularColor(), 0xffffff_rgbf);
-        CORRADE_COMPARE(phong.shininess(), 80.0f);
-    } {
-        auto material = importer->material("texture");
-        CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
-
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture);
-        CORRADE_COMPARE(phong.ambientColor(), 0x000000ff_rgbaf);
-        CORRADE_COMPARE(phong.diffuseColor(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
-        CORRADE_COMPARE(phong.diffuseTexture(), 0);
-        CORRADE_COMPARE(phong.specularColor(), 0xffffff_rgbf);
-        CORRADE_COMPARE(phong.shininess(), 80.0f);
-    } {
-        const char* name = "texture transform all";
+        const char* name = "defaults";
         auto material = importer->material(name);
         CORRADE_ITERATION(name);
         CORRADE_VERIFY(material);
         CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        CORRADE_COMPARE(material->types(), MaterialType::PbrMetallicRoughness);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 0);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::TextureTransformation);
-        CORRADE_COMPARE(phong.textureMatrix(), (Matrix3{
+        /* These are glTF defaults, just verify those are consistent with
+           MaterialData API defaults (if they wouldn't be, we'd need to add
+           explicit attributes to override those) */
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_COMPARE(pbr.baseColor(), (Color4{1.0f}));
+        CORRADE_COMPARE(pbr.metalness(), 1.0f);
+        CORRADE_COMPARE(pbr.roughness(), 1.0f);
+    } {
+        const char* name = "color";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 3);
+
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_COMPARE(pbr.baseColor(), (Color4{0.3f, 0.4f, 0.5f, 0.8f}));
+        CORRADE_COMPARE(pbr.metalness(), 0.56f);
+        CORRADE_COMPARE(pbr.roughness(), 0.89f);
+    } {
+        const char* name = "textures";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 5);
+
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::BaseColorTexture));
+        CORRADE_COMPARE(pbr.baseColor(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
+        CORRADE_COMPARE(pbr.baseColorTexture(), 0);
+        CORRADE_COMPARE(pbr.metalness(), 0.6f);
+        CORRADE_COMPARE(pbr.roughness(), 0.9f);
+        CORRADE_VERIFY(pbr.hasNoneRoughnessMetallicTexture());
+        CORRADE_COMPARE(pbr.metalnessTexture(), 1);
+    } {
+        const char* name = "identity texture transform";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 5);
+
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        /* Identity transform, but is present */
+        CORRADE_VERIFY(pbr.hasTextureTransformation());
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::BaseColorTexture));
+        CORRADE_COMPARE(pbr.baseColorTextureMatrix(), (Matrix3{}));
+        CORRADE_VERIFY(pbr.hasNoneRoughnessMetallicTexture());
+        CORRADE_COMPARE(pbr.metalnessTextureMatrix(), (Matrix3{}));
+    } {
+        const char* name = "texture transform";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 5);
+
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        /* All */
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::BaseColorTexture));
+        CORRADE_COMPARE(pbr.baseColorTextureMatrix(), (Matrix3{
             {0.164968f, 0.472002f, 0.0f},
             {-0.472002f, 0.164968f, 0.0f},
             {0.472002f, -0.164968f, 1.0f}
         }));
-    } {
-        const char* name = "texture transform offset + scale";
-        auto material = importer->material(name);
-        CORRADE_ITERATION(name);
-        CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
-
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::TextureTransformation);
-        CORRADE_COMPARE(phong.textureMatrix(), (Matrix3{
+        /* Offset + scale */
+        CORRADE_VERIFY(pbr.hasNoneRoughnessMetallicTexture());
+        CORRADE_COMPARE(pbr.metalnessTextureMatrix(), (Matrix3{
             {0.5f, 0.0f, 0.0f},
             {0.0f, 0.5f, 0.0f},
             {0.0f, -0.5f, 1.0f}
         }));
     } {
-        const char* name = "texture transform nothing";
+        const char* name = "texture coordinate sets";
         auto material = importer->material(name);
         CORRADE_ITERATION(name);
         CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 5);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::TextureTransformation);
-        CORRADE_COMPARE(phong.textureMatrix(), (Matrix3{}));
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::BaseColorTexture));
+        CORRADE_COMPARE(pbr.baseColorTextureCoordinates(), 7);
+        CORRADE_VERIFY(pbr.hasNoneRoughnessMetallicTexture());
+        CORRADE_COMPARE(pbr.metalnessTextureCoordinates(), 5);
     } {
-        const char* name = "color + normal map";
+        const char* name = "empty texture transform with overriden coordinate set";
         auto material = importer->material(name);
         CORRADE_ITERATION(name);
         CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 7);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::NormalTexture);
-        CORRADE_COMPARE(phong.diffuseColor(), (Color4{0.3f, 0.4f, 0.5f, 0.8f}));
-        CORRADE_COMPARE(phong.normalTexture(), 1);
-    } {
-        const char* name = "normal map, texture transform";
-        auto material = importer->material(name);
-        CORRADE_ITERATION(name);
-        CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
-
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::NormalTexture|PhongMaterialData::Flag::TextureTransformation);
-        CORRADE_COMPARE(phong.diffuseColor(), (Color4{1.0f}));
-        CORRADE_COMPARE(phong.normalTexture(), 1);
-        CORRADE_COMPARE(phong.textureMatrix(), (Matrix3{
-            {0.329937f, 0.944003f, 0.0f},
-            {-0.944003f, 0.329937f, 0.0f},
-            {0.944003f, 0.670063f, 1.0f}
-        }));
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::BaseColorTexture));
+        CORRADE_COMPARE(pbr.baseColorTextureMatrix(), Matrix3{});
+        CORRADE_VERIFY(pbr.hasNoneRoughnessMetallicTexture());
+        CORRADE_COMPARE(pbr.metalnessTextureMatrix(), Matrix3{});
+        CORRADE_COMPARE(pbr.metalnessTextureCoordinates(), 2); /* not 5 */
     }
 }
 
 void TinyGltfImporterTest::materialPbrSpecularGlossiness() {
     Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    /* Disable Phong material fallback (enabled by default for compatibility),
+       testing that separately in materialPhongFallback() */
+    importer->configuration().setValue("phongMaterialFallback", false);
+
     CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
         "material-specularglossiness.gltf")));
-
     CORRADE_COMPARE(importer->materialCount(), 7);
 
     {
-        auto material = importer->material("colors");
-        CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
-
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.diffuseColor(), (Color4{0.3f, 0.4f, 0.5f, 0.8f}));
-        /* This is always three-component */
-        CORRADE_COMPARE(phong.specularColor(), (Color4{0.1f, 0.2f, 0.6f}));
-        CORRADE_COMPARE(phong.shininess(), 80.0f);
-    } {
-        auto material = importer->material("textures");
-        CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
-
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::SpecularTexture);
-        CORRADE_COMPARE(phong.diffuseColor(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
-        CORRADE_COMPARE(phong.diffuseTexture(), 0);
-        /* This is always three-component */
-        CORRADE_COMPARE(phong.specularColor(), (Color3{0.4f, 0.5f, 0.6f}));
-        CORRADE_COMPARE(phong.specularTexture(), 1);
-        CORRADE_COMPARE(phong.shininess(), 80.0f);
-    } {
-        const char* name = "texture transform same for both textures";
+        const char* name = "defaults";
         auto material = importer->material(name);
         CORRADE_ITERATION(name);
         CORRADE_VERIFY(material);
         CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        {
+            CORRADE_EXPECT_FAIL("Ideally tinygltf wouldn't define metallic/roughness attributes if not present in the material, but well.");
+            CORRADE_COMPARE(material->types(), MaterialType::PbrSpecularGlossiness);
+        }
+        CORRADE_COMPARE(material->types(), MaterialType::PbrSpecularGlossiness|MaterialType::PbrMetallicRoughness);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 0);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::SpecularTexture|PhongMaterialData::Flag::TextureTransformation);
-        CORRADE_COMPARE(phong.textureMatrix(), (Matrix3{
-            {0.164968f, 0.472002f, 0.0f},
-            {-0.472002f, 0.164968f, 0.0f},
-            {0.472002f, 0.835032f, 1.0f}
-        }));
+        /* These are glTF defaults, just verify those are consistent with
+           MaterialData API defaults (if they wouldn't be, we'd need to add
+           explicit attributes to override those) */
+        const auto& pbr = material->as<PbrSpecularGlossinessMaterialData>();
+        CORRADE_COMPARE(pbr.diffuseColor(), (Color4{1.0f}));
+        CORRADE_COMPARE(pbr.specularColor(), (Color4{1.0f, 0.0f}));
+        CORRADE_COMPARE(pbr.glossiness(), 1.0f);
     } {
-        const char* name = "texture transform first none, second identity";
+        const char* name = "color";
         auto material = importer->material(name);
         CORRADE_ITERATION(name);
         CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 3);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::SpecularTexture|PhongMaterialData::Flag::TextureTransformation);
-        CORRADE_COMPARE(phong.textureMatrix(), (Matrix3{}));
+        const auto& pbr = material->as<PbrSpecularGlossinessMaterialData>();
+        CORRADE_COMPARE(pbr.diffuseColor(), (Color4{0.3f, 0.4f, 0.5f, 0.8f}));
+        CORRADE_COMPARE(pbr.specularColor(), (Color4{0.1f, 0.2f, 0.6f, 0.0f}));
+        CORRADE_COMPARE(pbr.glossiness(), 0.89f);
     } {
-        const char* name = "texture transform first identity, second none";
+        const char* name = "textures";
         auto material = importer->material(name);
         CORRADE_ITERATION(name);
         CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 5);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::SpecularTexture|PhongMaterialData::Flag::TextureTransformation);
-        CORRADE_COMPARE(phong.textureMatrix(), (Matrix3{}));
+        const auto& pbr = material->as<PbrSpecularGlossinessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::DiffuseTexture));
+        CORRADE_COMPARE(pbr.diffuseColor(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
+        CORRADE_COMPARE(pbr.diffuseTexture(), 0);
+        CORRADE_COMPARE(pbr.specularColor(), (Color4{0.4f, 0.5f, 0.6f, 0.0f}));
+        CORRADE_VERIFY(pbr.hasSpecularGlossinessTexture());
+        CORRADE_COMPARE(pbr.specularTexture(), 1);        CORRADE_COMPARE(pbr.glossiness(), 0.9f);
     } {
-        const char* name = "texture transform nothing";
+        const char* name = "identity texture transform";
         auto material = importer->material(name);
         CORRADE_ITERATION(name);
         CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        CORRADE_COMPARE(material->layerCount(), 1);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
+        const auto& pbr = material->as<PbrSpecularGlossinessMaterialData>();
         {
             CORRADE_EXPECT_FAIL("tinygltf treats an empty extension object inside an extension as if there was no extension at all. The same works correctly with builtin pbrMetallicRoughness.");
-            CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::TextureTransformation);
-        } {
-            CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture);
+            CORRADE_COMPARE(material->attributeCount(), 5);
+            CORRADE_VERIFY(pbr.hasTextureTransformation());
         }
-        CORRADE_COMPARE(phong.textureMatrix(), (Matrix3{}));
+        CORRADE_COMPARE(material->attributeCount(), 2);
+
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::DiffuseTexture));
+        CORRADE_COMPARE(pbr.diffuseTextureMatrix(), (Matrix3{}));
+        CORRADE_VERIFY(pbr.hasSpecularGlossinessTexture());
+        CORRADE_COMPARE(pbr.specularTextureMatrix(), (Matrix3{}));
     } {
-        const char* name = "color + normal map";
+        const char* name = "texture transform";
         auto material = importer->material(name);
         CORRADE_ITERATION(name);
         CORRADE_VERIFY(material);
-        CORRADE_VERIFY(material->importerState());
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 5);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::NormalTexture);
-        CORRADE_COMPARE(phong.diffuseColor(), (Color4{0.3f, 0.4f, 0.5f, 0.8f}));
-        CORRADE_COMPARE(phong.normalTexture(), 1);
+        const auto& pbr = material->as<PbrSpecularGlossinessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::DiffuseTexture));
+        CORRADE_COMPARE(pbr.diffuseTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.0f, -1.0f, 1.0f}
+        }));
+        CORRADE_VERIFY(pbr.hasSpecularGlossinessTexture());
+        CORRADE_COMPARE(pbr.specularTextureMatrix(), (Matrix3{
+            {0.5f, 0.0f, 0.0f},
+            {0.0f, 0.5f, 0.0f},
+            {0.0f, 0.5f, 1.0f}
+        }));
+    } {
+        const char* name = "texture coordinate sets";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 5);
+
+        const auto& pbr = material->as<PbrSpecularGlossinessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::DiffuseTexture));
+        CORRADE_COMPARE(pbr.diffuseTextureCoordinates(), 7);
+        CORRADE_VERIFY(pbr.hasSpecularGlossinessTexture());
+        CORRADE_COMPARE(pbr.specularTextureCoordinates(), 5);
+    } {
+        const char* name = "both metallic/roughness and specular/glossiness";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+
+        CORRADE_COMPARE(material->types(), MaterialType::PbrSpecularGlossiness|MaterialType::PbrMetallicRoughness);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 6);
+
+        const auto& a = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_COMPARE(a.baseColor(), (Color4{0.3f, 0.4f, 0.5f, 0.8f}));
+        CORRADE_COMPARE(a.metalness(), 0.56f);
+        CORRADE_COMPARE(a.roughness(), 0.89f);
+
+        const auto& b = material->as<PbrSpecularGlossinessMaterialData>();
+        CORRADE_COMPARE(b.diffuseColor(), (Color4{0.3f, 0.4f, 0.5f, 0.8f}));
+        CORRADE_COMPARE(b.specularColor(), (Color4{0.1f, 0.2f, 0.6f, 0.0f}));
+        CORRADE_COMPARE(b.glossiness(), 0.89f);
     }
 }
 
-void TinyGltfImporterTest::materialProperties() {
+void TinyGltfImporterTest::materialCommon() {
     Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
-    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
-        "material-properties.gltf")));
 
-    CORRADE_COMPARE(importer->materialCount(), 4);
+    /* Disable Phong material fallback (enabled by default for compatibility),
+       testing that separately in materialPhongFallback() */
+    importer->configuration().setValue("phongMaterialFallback", false);
+
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "material-common.gltf")));
+    CORRADE_COMPARE(importer->materialCount(), 7);
 
     {
-        auto material = importer->material("implicit values");
+        auto material = importer->material("defaults");
         CORRADE_VERIFY(material);
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        {
+            CORRADE_EXPECT_FAIL("Ideally tinygltf wouldn't define metallic/roughness attributes if not present in the material, but well.");
+            CORRADE_COMPARE(material->types(), MaterialTypes{});
+        }
+        CORRADE_COMPARE(material->types(), MaterialType::PbrMetallicRoughness);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 0);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flags{});
-        CORRADE_COMPARE(phong.alphaMode(), MaterialAlphaMode::Opaque);
-        CORRADE_COMPARE(phong.alphaMask(), 0.5f);
+        /* These are glTF defaults, just verify those are consistent with
+           MaterialData API defaults (if they wouldn't be, we'd need to add
+           explicit attributes to override those) */
+        CORRADE_COMPARE(material->alphaMode(), MaterialAlphaMode::Opaque);
+        CORRADE_COMPARE(material->alphaMask(), 0.5f);
     } {
         auto material = importer->material("alpha mask");
         CORRADE_VERIFY(material);
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
-
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flags{});
-        CORRADE_COMPARE(phong.alphaMode(), MaterialAlphaMode::Mask);
-        CORRADE_COMPARE(phong.alphaMask(), 0.369f);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 1);
+        CORRADE_COMPARE(material->alphaMode(), MaterialAlphaMode::Mask);
+        CORRADE_COMPARE(material->alphaMask(), 0.369f);
     } {
         auto material = importer->material("double-sided alpha blend");
         CORRADE_VERIFY(material);
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
-
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DoubleSided);
-        CORRADE_COMPARE(phong.alphaMode(), MaterialAlphaMode::Blend);
-        CORRADE_COMPARE(phong.alphaMask(), 0.5f);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 2);
+        CORRADE_VERIFY(material->isDoubleSided());
+        CORRADE_COMPARE(material->alphaMode(), MaterialAlphaMode::Blend);
+        CORRADE_COMPARE(material->alphaMask(), 0.5f);
     } {
         auto material = importer->material("opaque");
         CORRADE_VERIFY(material);
-        CORRADE_COMPARE(material->type(), MaterialType::Phong);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 0);
+        CORRADE_COMPARE(material->alphaMode(), MaterialAlphaMode::Opaque);
+        CORRADE_COMPARE(material->alphaMask(), 0.5f);
+    } {
+        const char* name = "normal, occlusion, emissive texture";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 6);
 
-        auto& phong = static_cast<const PhongMaterialData&>(*material);
-        CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flags{});
-        CORRADE_COMPARE(phong.alphaMode(), MaterialAlphaMode::Opaque);
-        CORRADE_COMPARE(phong.alphaMask(), 0.5f);
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::NormalTexture));
+        CORRADE_COMPARE(pbr.normalTexture(), 1);
+        CORRADE_COMPARE(pbr.normalTextureScale(), 0.56f);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::OcclusionTexture));
+        CORRADE_COMPARE(pbr.occlusionTexture(), 2);
+        CORRADE_COMPARE(pbr.occlusionTextureStrength(), 0.21f);
+        CORRADE_COMPARE(pbr.emissiveColor(), (Color3{0.1f, 0.2f, 0.3f}));
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::EmissiveTexture));
+        CORRADE_COMPARE(pbr.emissiveTexture(), 0);
+    } {
+        const char* name = "normal, occlusion, emissive texture identity transform";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 6);
+
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        /* Identity transform, but is present */
+        CORRADE_VERIFY(pbr.hasTextureTransformation());
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::NormalTexture));
+        CORRADE_COMPARE(pbr.normalTextureMatrix(), Matrix3{});
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::OcclusionTexture));
+        CORRADE_COMPARE(pbr.occlusionTextureMatrix(), Matrix3{});
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::EmissiveTexture));
+        CORRADE_COMPARE(pbr.emissiveTextureMatrix(), Matrix3{});
+    } {
+        const char* name = "normal, occlusion, emissive texture transform + sets";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 9);
+
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::NormalTexture));
+        CORRADE_COMPARE(pbr.normalTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.0f, -1.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.normalTextureCoordinates(), 2);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::OcclusionTexture));
+        CORRADE_COMPARE(pbr.occlusionTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.5f, -1.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.occlusionTextureCoordinates(), 3);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::EmissiveTexture));
+        CORRADE_COMPARE(pbr.emissiveTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.5f, 0.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.emissiveTextureCoordinates(), 1);
+    }
+}
+
+void TinyGltfImporterTest::materialUnlit() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    /* Disable Phong material fallback (enabled by default for compatibility),
+       testing that separately in materialPhongFallback() */
+    importer->configuration().setValue("phongMaterialFallback", false);
+
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "material-unlit.gltf")));
+    CORRADE_COMPARE(importer->materialCount(), 1);
+
+    auto material = importer->material(0);
+    CORRADE_VERIFY(material);
+    CORRADE_VERIFY(material->importerState());
+    /* Metallic/roughness is removed from types */
+    CORRADE_COMPARE(material->types(), MaterialType::Flat);
+    CORRADE_COMPARE(material->layerCount(), 1);
+    CORRADE_COMPARE(material->attributeCount(), 2);
+
+    const auto& flat = material->as<FlatMaterialData>();
+    CORRADE_COMPARE(flat.color(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
+    CORRADE_VERIFY(flat.hasTexture());
+    CORRADE_COMPARE(flat.texture(), 1);
+}
+
+void TinyGltfImporterTest::materialClearCoat() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    /* Disable Phong material fallback (enabled by default for compatibility),
+       testing that separately in materialPhongFallback() */
+    importer->configuration().setValue("phongMaterialFallback", false);
+
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "material-clearcoat.gltf")));
+    CORRADE_COMPARE(importer->materialCount(), 6);
+
+    {
+        const char* name = "defaults";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        {
+            CORRADE_EXPECT_FAIL("Ideally tinygltf wouldn't define metallic/roughness attributes if not present in the material, but well.");
+            CORRADE_COMPARE(material->types(), MaterialType::PbrClearCoat);
+        }
+        CORRADE_COMPARE(material->types(), MaterialType::PbrMetallicRoughness|MaterialType::PbrClearCoat);
+        CORRADE_COMPARE(material->layerCount(), 2);
+        CORRADE_VERIFY(material->hasLayer(MaterialLayer::ClearCoat));
+
+        /* These are glTF defaults, which are *not* consistent with ours */
+        const auto& pbr = material->as<PbrClearCoatMaterialData>();
+        CORRADE_COMPARE(pbr.attributeCount(), 3);
+        CORRADE_COMPARE(pbr.layerFactor(), 0.0f);
+        CORRADE_COMPARE(pbr.roughness(), 0.0f);
+    } {
+        const char* name = "factors";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 2);
+        CORRADE_VERIFY(material->hasLayer(MaterialLayer::ClearCoat));
+
+        const auto& pbr = material->as<PbrClearCoatMaterialData>();
+        CORRADE_COMPARE(pbr.attributeCount(), 3);
+        CORRADE_COMPARE(pbr.layerFactor(), 0.67f);
+        CORRADE_COMPARE(pbr.roughness(), 0.34f);
+    } {
+        const char* name = "textures";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 2);
+        CORRADE_VERIFY(material->hasLayer(MaterialLayer::ClearCoat));
+
+        const auto& pbr = material->as<PbrClearCoatMaterialData>();
+        CORRADE_COMPARE(pbr.attributeCount(), 8);
+        CORRADE_COMPARE(pbr.layerFactor(), 0.7f);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::LayerFactorTexture));
+        CORRADE_COMPARE(pbr.layerFactorTexture(), 2);
+        CORRADE_COMPARE(pbr.layerFactorTextureSwizzle(), MaterialTextureSwizzle::R);
+        CORRADE_COMPARE(pbr.roughness(), 0.4f);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::RoughnessTexture));
+        CORRADE_COMPARE(pbr.roughnessTexture(), 1);
+        CORRADE_COMPARE(pbr.roughnessTextureSwizzle(), MaterialTextureSwizzle::G);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::NormalTexture));
+        CORRADE_COMPARE(pbr.normalTexture(), 0);
+        CORRADE_COMPARE(pbr.normalTextureScale(), 0.35f);
+    } {
+        const char* name = "packed textures";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 2);
+        CORRADE_VERIFY(material->hasLayer(MaterialLayer::ClearCoat));
+
+        const auto& pbr = material->as<PbrClearCoatMaterialData>();
+        CORRADE_COMPARE(pbr.attributeCount(), 6);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::LayerFactorTexture));
+        CORRADE_COMPARE(pbr.layerFactorTexture(), 1);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::RoughnessTexture));
+        CORRADE_COMPARE(pbr.roughnessTexture(), 1);
+        CORRADE_VERIFY(pbr.hasLayerFactorRoughnessTexture());
+    } {
+        const char* name = "texture identity transform";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 2);
+        CORRADE_VERIFY(material->hasLayer(MaterialLayer::ClearCoat));
+
+        const auto& pbr = material->as<PbrClearCoatMaterialData>();
+        {
+            CORRADE_EXPECT_FAIL("tinygltf treats an empty extension object inside an extension as if there was no extension at all. The same works correctly with builtin pbrMetallicRoughness.");
+            CORRADE_COMPARE(pbr.attributeCount(), 7 + 3);
+            CORRADE_VERIFY(pbr.hasTextureTransformation());
+        }
+        CORRADE_COMPARE(pbr.attributeCount(), 7);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::LayerFactorTexture));
+        CORRADE_COMPARE(pbr.layerFactorTextureMatrix(), Matrix3{});
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::RoughnessTexture));
+        CORRADE_COMPARE(pbr.roughnessTextureMatrix(), Matrix3{});
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::NormalTexture));
+        CORRADE_COMPARE(pbr.normalTextureMatrix(), Matrix3{});
+    } {
+        const char* name = "texture transform + coordinate set";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->layerCount(), 2);
+        CORRADE_VERIFY(material->hasLayer(MaterialLayer::ClearCoat));
+
+        const auto& pbr = material->as<PbrClearCoatMaterialData>();
+        CORRADE_COMPARE(pbr.attributeCount(), 13);
+        /* Identity transform, but is present */
+        CORRADE_VERIFY(pbr.hasTextureTransformation());
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::LayerFactorTexture));
+        CORRADE_COMPARE(pbr.layerFactorTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.0f, -1.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.layerFactorTextureCoordinates(), 5);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::RoughnessTexture));
+        CORRADE_COMPARE(pbr.roughnessTextureMatrix(), (Matrix3{
+            {0.5f, 0.0f, 0.0f},
+            {0.0f, 0.5f, 0.0f},
+            {0.0f, 0.5f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.roughnessTextureCoordinates(), 1);
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::NormalTexture));
+        CORRADE_COMPARE(pbr.normalTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.5f, 0.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.normalTextureCoordinates(), 7);
+    }
+}
+
+void TinyGltfImporterTest::materialPhongFallback() {
+    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    /* phongMaterialFallback should be on by default */
+    //importer->configuration().setValue("phongMaterialFallback", true);
+
+    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
+        "material-phong-fallback.gltf")));
+    CORRADE_COMPARE(importer->materialCount(), 4);
+
+    {
+        const char* name = "none";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_VERIFY(material->importerState());
+        {
+            CORRADE_EXPECT_FAIL("Ideally tinygltf wouldn't define metallic/roughness attributes if not present in the material, but well.");
+            CORRADE_COMPARE(material->types(), MaterialType::Phong);
+        }
+        CORRADE_COMPARE(material->types(), MaterialType::Phong|MaterialType::PbrMetallicRoughness);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 0);
+
+        /* These are glTF defaults, just verify those are consistent with
+           MaterialData API defaults (if they wouldn't be, we'd need to add
+           explicit attributes to override those) */
+        const auto& phong = material->as<PhongMaterialData>();
+        CORRADE_COMPARE(phong.diffuseColor(), (Color4{1.0f}));
+        CORRADE_COMPARE(phong.specularColor(), (Color4{1.0f, 0.0f}));
+    } {
+        const char* name = "metallic/roughness";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        CORRADE_COMPARE(material->types(), MaterialType::Phong|MaterialType::PbrMetallicRoughness);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 8);
+
+        /* Original properties should stay */
+        const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::BaseColorTexture));
+        CORRADE_COMPARE(pbr.baseColor(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
+        CORRADE_COMPARE(pbr.baseColorTexture(), 1);
+        CORRADE_COMPARE(pbr.baseColorTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.5f, -1.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.baseColorTextureCoordinates(), 3);
+
+        /* ... and should be copied into phong properties as well */
+        const auto& phong = material->as<PhongMaterialData>();
+        CORRADE_VERIFY(phong.hasAttribute(MaterialAttribute::DiffuseTexture));
+        CORRADE_COMPARE(phong.diffuseColor(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
+        CORRADE_COMPARE(phong.diffuseTexture(), 1);
+        CORRADE_COMPARE(phong.diffuseTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.5f, -1.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(phong.diffuseTextureCoordinates(), 3);
+        /* Defaults for specular */
+        CORRADE_COMPARE(phong.specularColor(), (Color4{1.0f, 0.0f}));
+        CORRADE_VERIFY(!phong.hasSpecularTexture());
+    } {
+        const char* name = "specular/glossiness";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        {
+            CORRADE_EXPECT_FAIL("Ideally tinygltf wouldn't define metallic/roughness attributes if not present in the material, but well.");
+            CORRADE_COMPARE(material->types(), MaterialType::Phong|MaterialType::PbrSpecularGlossiness);
+        }
+        CORRADE_COMPARE(material->types(), MaterialType::Phong|MaterialType::PbrMetallicRoughness|MaterialType::PbrSpecularGlossiness);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 10);
+
+        /* Original properties should stay */
+        const auto& pbr = material->as<PbrSpecularGlossinessMaterialData>();
+        CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::DiffuseTexture));
+        CORRADE_COMPARE(pbr.diffuseColor(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
+        CORRADE_COMPARE(pbr.diffuseTexture(), 1);
+        CORRADE_COMPARE(pbr.diffuseTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.5f, -1.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.diffuseTextureCoordinates(), 3);
+        CORRADE_COMPARE(pbr.specularColor(), (Color4{0.1f, 0.2f, 0.6f, 0.0f}));
+        CORRADE_COMPARE(pbr.specularTexture(), 0);
+        CORRADE_COMPARE(pbr.specularTextureMatrix(), (Matrix3{
+            {0.5f, 0.0f, 0.0f},
+            {0.0f, 0.5f, 0.0f},
+            {0.0f, 0.5f, 1.0f}
+        }));
+        CORRADE_COMPARE(pbr.specularTextureCoordinates(), 2);
+
+        /* Phong recognizes them directly */
+        const auto& phong = material->as<PhongMaterialData>();
+        CORRADE_VERIFY(phong.hasAttribute(MaterialAttribute::DiffuseTexture));
+        CORRADE_COMPARE(phong.diffuseColor(), (Color4{0.7f, 0.8f, 0.9f, 1.1f}));
+        CORRADE_COMPARE(phong.diffuseTexture(), 1);
+        CORRADE_COMPARE(phong.diffuseTextureMatrix(), (Matrix3{
+            {1.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            {0.5f, -1.0f, 1.0f}
+        }));
+        CORRADE_COMPARE(phong.diffuseTextureCoordinates(), 3);
+        CORRADE_COMPARE(phong.specularColor(), (Color4{0.1f, 0.2f, 0.6f, 0.0f}));
+        CORRADE_COMPARE(phong.specularTexture(), 0);
+        CORRADE_COMPARE(phong.specularTextureMatrix(), (Matrix3{
+            {0.5f, 0.0f, 0.0f},
+            {0.0f, 0.5f, 0.0f},
+            {0.0f, 0.5f, 1.0f}
+        }));
+        CORRADE_COMPARE(phong.specularTextureCoordinates(), 2);
+    } {
+        const char* name = "unlit";
+        auto material = importer->material(name);
+        CORRADE_ITERATION(name);
+        CORRADE_VERIFY(material);
+        /* Phong type is added even for unlit materials, since that's how it
+           behaved before */
+        CORRADE_COMPARE(material->types(), MaterialType::Phong|MaterialType::Flat);
+        CORRADE_COMPARE(material->layerCount(), 1);
+        CORRADE_COMPARE(material->attributeCount(), 0);
     }
 }
 
@@ -2501,15 +3157,14 @@ void TinyGltfImporterTest::materialTexCoordFlip() {
     /* Texture transform is added to materials that don't have it yet */
     auto material = importer->material(data.name);
     CORRADE_VERIFY(material);
-    CORRADE_COMPARE(material->type(), MaterialType::Phong);
-    auto& phongMaterial = static_cast<PhongMaterialData&>(*material);
-    if(data.flipInMaterial) CORRADE_COMPARE(phongMaterial.flags(),
-        data.materialFlags|PhongMaterialData::Flag::TextureTransformation);
-    else CORRADE_COMPARE(phongMaterial.flags(), data.materialFlags);
+
+    auto& pbr = static_cast<PbrMetallicRoughnessMaterialData&>(*material);
+    CORRADE_COMPARE(pbr.hasTextureTransformation(), data.flipInMaterial || data.hasTextureTransformation);
+    CORRADE_VERIFY(pbr.hasCommonTextureTransformation());
 
     /* Transformed texture coordinates should be the same regardless of the
        setting */
-    MeshTools::transformPointsInPlace(phongMaterial.textureMatrix(), texCoords);
+    MeshTools::transformPointsInPlace(pbr.commonTextureMatrix(), texCoords);
     CORRADE_COMPARE_AS(texCoords, Containers::arrayView<Vector2>({
         {1.0f, 0.5f},
         {0.5f, 1.0f},
@@ -2517,80 +3172,28 @@ void TinyGltfImporterTest::materialTexCoordFlip() {
     }), TestSuite::Compare::Container);
 }
 
-void TinyGltfImporterTest::materialTextureCoordinateSetsDefault() {
-    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
-    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
-        "material-texcoord-sets.gltf")));
-
-    std::ostringstream out;
-    Error redirectError{&out};
-
-    CORRADE_VERIFY(!importer->material(0));
-    CORRADE_VERIFY(!importer->material(1));
-    CORRADE_VERIFY(!importer->material(2));
-    CORRADE_VERIFY(!importer->material(3));
-    CORRADE_COMPARE(out.str(),
-        "Trade::TinyGltfImporter::material(): multiple texture coordinate sets are not allowed by default, enable allowMaterialTextureCoordinateSets to import them\n"
-        "Trade::TinyGltfImporter::material(): multiple texture coordinate sets are not allowed by default, enable allowMaterialTextureCoordinateSets to import them\n"
-        "Trade::TinyGltfImporter::material(): multiple texture coordinate sets are not allowed by default, enable allowMaterialTextureCoordinateSets to import them\n"
-        "Trade::TinyGltfImporter::material(): multiple texture coordinate sets are not allowed by default, enable allowMaterialTextureCoordinateSets to import them\n");
-}
-
-void TinyGltfImporterTest::materialTextureCoordinateSets() {
-    Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
-    CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
-        "material-texcoord-sets.gltf")));
-
-    importer->configuration().setValue("allowMaterialTextureCoordinateSets", true);
-
-    auto mat0 = importer->material(0);
-    CORRADE_VERIFY(mat0);
-    auto& phongMaterial0 = static_cast<PhongMaterialData&>(*mat0);
-    CORRADE_COMPARE(phongMaterial0.flags(),
-        PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::TextureCoordinateSets);
-    CORRADE_COMPARE(phongMaterial0.diffuseCoordinateSet(), 1);
-
-    auto mat1 = importer->material(1);
-    CORRADE_VERIFY(mat1);
-    auto& phongMaterial1 = static_cast<PhongMaterialData&>(*mat1);
-    CORRADE_COMPARE(phongMaterial1.flags(),
-        PhongMaterialData::Flag::NormalTexture|PhongMaterialData::Flag::TextureCoordinateSets);
-    CORRADE_COMPARE(phongMaterial1.normalCoordinateSet(), 2);
-
-    auto mat2 = importer->material(2);
-    CORRADE_VERIFY(mat2);
-    auto& phongMaterial2 = static_cast<PhongMaterialData&>(*mat2);
-    CORRADE_COMPARE(phongMaterial2.flags(),
-        PhongMaterialData::Flag::DiffuseTexture|PhongMaterialData::Flag::TextureCoordinateSets);
-    CORRADE_COMPARE(phongMaterial2.diffuseCoordinateSet(), 3);
-
-    auto mat3 = importer->material(3);
-    CORRADE_VERIFY(mat3);
-    auto& phongMaterial3 = static_cast<PhongMaterialData&>(*mat3);
-    CORRADE_COMPARE(phongMaterial3.flags(),
-        PhongMaterialData::Flag::SpecularTexture|PhongMaterialData::Flag::TextureCoordinateSets);
-    CORRADE_COMPARE(phongMaterial3.specularCoordinateSet(), 4);
-}
-
 void TinyGltfImporterTest::texture() {
     auto&& data = SingleFileData[testCaseInstanceId()];
     setTestCaseDescription(data.name);
 
     Containers::Pointer<AbstractImporter> importer = _manager.instantiate("TinyGltfImporter");
+
+    /* Disable Phong material fallback (enabled by default for compatibility),
+       testing that separately in materialPhongFallback() */
+    importer->configuration().setValue("phongMaterialFallback", false);
+
     CORRADE_VERIFY(importer->openFile(Utility::Directory::join(TINYGLTFIMPORTER_TEST_DIR,
         "texture" + std::string{data.suffix})));
-
     CORRADE_COMPARE(importer->materialCount(), 1);
 
     auto material = importer->material(0);
 
     CORRADE_VERIFY(material);
-    CORRADE_COMPARE(material->type(), MaterialType::Phong);
+    CORRADE_COMPARE(material->types(), MaterialType::PbrMetallicRoughness);
 
-    auto&& phong = static_cast<const PhongMaterialData&>(*material);
-    CORRADE_COMPARE(phong.flags(), PhongMaterialData::Flag::DiffuseTexture);
-    CORRADE_COMPARE(phong.diffuseTexture(), 0);
-    CORRADE_COMPARE(phong.shininess(), 80.0f);
+    const auto& pbr = material->as<PbrMetallicRoughnessMaterialData>();
+    CORRADE_VERIFY(pbr.hasAttribute(MaterialAttribute::BaseColorTexture));
+    CORRADE_COMPARE(pbr.baseColorTexture(), 0);
 
     CORRADE_COMPARE(importer->textureCount(), 2);
     CORRADE_COMPARE(importer->textureForName("Texture"), 1);

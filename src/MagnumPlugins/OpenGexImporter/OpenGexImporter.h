@@ -240,7 +240,7 @@ class MAGNUM_OPENGEXIMPORTER_EXPORT OpenGexImporter: public AbstractImporter {
         MAGNUM_OPENGEXIMPORTER_LOCAL void doOpenFile(const std::string& filename) override;
         MAGNUM_OPENGEXIMPORTER_LOCAL void doClose() override;
 
-        MAGNUM_OPENGEXIMPORTER_LOCAL Int doDefaultScene() override;
+        MAGNUM_OPENGEXIMPORTER_LOCAL Int doDefaultScene() const override;
         MAGNUM_OPENGEXIMPORTER_LOCAL UnsignedInt doSceneCount() const override;
         MAGNUM_OPENGEXIMPORTER_LOCAL Containers::Optional<SceneData> doScene(UnsignedInt id) override;
 
@@ -261,7 +261,7 @@ class MAGNUM_OPENGEXIMPORTER_EXPORT OpenGexImporter: public AbstractImporter {
         MAGNUM_OPENGEXIMPORTER_LOCAL UnsignedInt doMaterialCount() const override;
         MAGNUM_OPENGEXIMPORTER_LOCAL Int doMaterialForName(const std::string& name) override;
         MAGNUM_OPENGEXIMPORTER_LOCAL std::string doMaterialName(UnsignedInt id) override;
-        MAGNUM_OPENGEXIMPORTER_LOCAL Containers::Pointer<AbstractMaterialData> doMaterial(UnsignedInt id) override;
+        MAGNUM_OPENGEXIMPORTER_LOCAL Containers::Optional<MaterialData> doMaterial(UnsignedInt id) override;
 
         MAGNUM_OPENGEXIMPORTER_LOCAL UnsignedInt doTextureCount() const override;
         MAGNUM_OPENGEXIMPORTER_LOCAL Containers::Optional<TextureData> doTexture(UnsignedInt id) override;

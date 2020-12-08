@@ -62,6 +62,7 @@ cmake .. \
     $FREETYPE_INCLUDE_DIR_freetype2 \
     -DWITH_FAAD2AUDIOIMPORTER=ON \
     -DWITH_FREETYPEFONT=ON \
+    -DWITH_GLSLANGSHADERCONVERTER=ON \
     -DWITH_HARFBUZZFONT=ON \
     -DWITH_ICOIMPORTER=ON \
     -DWITH_JPEGIMAGECONVERTER=ON \
@@ -72,6 +73,7 @@ cmake .. \
     -DWITH_PNGIMAGECONVERTER=ON \
     -DWITH_PNGIMPORTER=ON \
     -DWITH_PRIMITIVEIMPORTER=ON \
+    -DWITH_SPIRVTOOLSSHADERCONVERTER=ON \
     -DWITH_STANFORDIMPORTER=ON \
     -DWITH_STANFORDSCENECONVERTER=ON \
     -DWITH_STBIMAGECONVERTER=ON \
@@ -91,5 +93,5 @@ ninja install # for Any*Importer tests
 
 # DevIL tests "leak" since testing directly the dlopen()ed dynamic plugin, was
 # not a problem when testing a statically built library.
-ASAN_OPTIONS="color=always" LSAN_OPTIONS="color=always suppressions=$TRAVIS_BUILD_DIR/package/ci/leaksanitizer.conf" TSAN_OPTIONS="color=always" CORRADE_TEST_COLOR=ON ctest -V -E "DevIl"
-ASAN_OPTIONS="color=always" LSAN_OPTIONS="color=always suppressions=$TRAVIS_BUILD_DIR/package/ci/leaksanitizer-devil.conf" TSAN_OPTIONS="color=always" CORRADE_TEST_COLOR=ON ctest -V -R DevIl
+ASAN_OPTIONS="color=always" LSAN_OPTIONS="color=always suppressions=$(pwd)/../package/ci/leaksanitizer.conf" TSAN_OPTIONS="color=always" CORRADE_TEST_COLOR=ON ctest -V -E "DevIl"
+ASAN_OPTIONS="color=always" LSAN_OPTIONS="color=always suppressions=$(pwd)/../package/ci/leaksanitizer-devil.conf" TSAN_OPTIONS="color=always" CORRADE_TEST_COLOR=ON ctest -V -R DevIl

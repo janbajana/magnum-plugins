@@ -46,6 +46,7 @@ option(WITH_DRMP3AUDIOIMPORTER "Build DrMp3AudioImporter plugin" OFF)
 option(WITH_DRWAVAUDIOIMPORTER "Build DrWavAudioImporter plugin" OFF)
 option(WITH_FAAD2AUDIOIMPORTER "Build Faad2AudioImporter plugin" OFF)
 cmake_dependent_option(WITH_FREETYPEFONT "Build FreeTypeFont plugin" OFF "NOT WITH_HARFBUZZFONT" ON)
+option(WITH_GLSLANGSHADERCONVERTER "Build GlslangShaderConverter plugin" OFF)
 option(WITH_HARFBUZZFONT "Build HarfBuzzFont plugin" OFF)
 option(WITH_ICOIMPORTER "Build IcoImporter plugin" OFF)
 option(WITH_JPEGIMAGECONVERTER "Build JpegImageConverter plugin" OFF)
@@ -57,6 +58,7 @@ option(WITH_OPENGEXIMPORTER "Build OpenGexImporter plugin" OFF)
 option(WITH_PNGIMAGECONVERTER "Build PngImageConverter plugin" OFF)
 option(WITH_PNGIMPORTER "Build PngImporter plugin" OFF)
 option(WITH_PRIMITIVEIMPORTER "Build PrimitiveImporter plugin" OFF)
+option(WITH_SPIRVTOOLSSHADERCONVERTER "Build SpirvToolsShaderConverter plugin" OFF)
 option(WITH_STANFORDIMPORTER "Build StanfordImporter plugin" OFF)
 option(WITH_STANFORDSCENECONVERTER "Build StanfordSceneConverter plugin" OFF)
 option(WITH_STBIMAGECONVERTER "Build StbImageConverter plugin" OFF)
@@ -119,10 +121,10 @@ set(MAGNUMPLUGINS_CMAKE_MODULE_INSTALL_DIR share/cmake/MagnumPlugins)
 
 # Library version. MAGNUMPLUGINS_VERSION_YEAR/MONTH is used in
 # src/Magnum/CMakeLists.txt to generate the versionPlugins.h header.
-set(MAGNUMPLUGINS_LIBRARY_VERSION 2.3)
+set(MAGNUMPLUGINS_LIBRARY_VERSION 2.4)
 set(MAGNUMPLUGINS_LIBRARY_SOVERSION 2)
-set(MAGNUMPLUGINS_VERSION_YEAR 2019)
-set(MAGNUMPLUGINS_VERSION_MONTH 10)
+set(MAGNUMPLUGINS_VERSION_YEAR 2020)
+set(MAGNUMPLUGINS_VERSION_MONTH 6)
 
 # A single output location. After a decade of saying NO THIS IS A NON-SOLUTION
 # TO A NON-PROBLEM I reconsidered my views and enabled this, because:
